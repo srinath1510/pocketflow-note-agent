@@ -132,3 +132,142 @@ class CaptureIngestionNode(BaseNode):
         
         self.logger.info(f"Core execution complete: {len(processed_captures)} captures processed")
         return shared_state
+
+
+    def _process_single_capture(self, raw_capture: Dict[str, Any], index: int) -> Dict[str, Any]:
+        """
+       Helper method: Process a single capture through all transformation steps.
+        
+        Args:
+            raw_capture: Raw capture data from browser extension
+            index: Index of capture in batch
+            
+        Returns:
+            Processed capture with normalized structure
+        """
+        timestamp = self._parse_timestamp(raw_capture.get('timestamp'))
+        capture_id = f"capture_{int(timestamp.timestamp() * 1000)}_{hash(raw_capture['url']) % 1000000:06d}"
+
+        url_info = self._parse_url(raw_capture['url'])
+
+        cleaned_content = self._clean_html_content(raw_capture['content'])
+        content_metadata = self._extract_content_metadata(raw_capture, cleaned_content)
+
+    
+    def _parse_timestamp(self, timestamp_str: str) -> datetime:
+        """Helper method: Parse timestamp string into datetime object."""
+        try:
+            if isinstance(timestamp_str, (int, float)):
+                return datetime.fromtimestamp(timestamp_str / 1000, tz=timezone.utc)
+            return date_parser.parse(timestamp_str)
+        except Exception:
+            return datetime.now(timezone.utc)
+
+
+    def _parse_url(self, url: str) -> Dict[str, str]:
+        """Helper method: Extract domain and URL components."""
+        try:
+            parsed = urlparse(url)
+            return {
+                'domain': parsed.netloc.lower(),
+                'scheme': parsed.scheme,
+                'path': parsed.path,
+                'query': parsed.query,
+                'fragment': parsed.fragment
+            }
+        except Exception:
+            return {'domain': 'unknown', 'scheme': '', 'path': '', 'query': '', 'fragment': ''}
+
+    
+    def _clean_html_content(self, html_content: str) -> str:
+        """Helper method: Clean HTML and convert to readable text."""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            for script in soup(["script", "style", "nav", "header", "footer", "aside"]):
+                script.decompose()
+            
+            text_content = self.html_converter.handle(str(soup))
+            
+            text_content = re.sub(r'\n\s*\n\s*\n', '\n\n', text_content)
+            text_content = re.sub(r'[ \t]+', ' ', text_content)
+            
+            return text_content.strip()
+            
+        except Exception as e:
+            self.logger.warning(f"Error cleaning HTML content: {str(e)}")
+            return html_content
+    
+
+    def _extract_content_metadata(self, raw_capture: Dict[str, Any], cleaned_content: str) -> Dict[str, Any]:
+        """Helper method: Extract metadata from page content."""
+        try:
+            soup = BeautifulSoup(raw_capture['content'], 'html.parser')
+            
+            title_tag = soup.find('title')
+            page_title = title_tag.get_text().strip() if title_tag else 'Untitled'
+            
+            headings = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+            heading_hierarchy = []
+            for heading in headings:
+                heading_hierarchy.append({
+                    'level': int(heading.name[1]),
+                    'text': heading.get_text().strip()[:100],
+                    'id': heading.get('id', '')
+                })
+            
+            links = soup.find_all('a', href=True)
+            external_links = sum(1 for link in links if self._is_external_link(link['href'], raw_capture['url']))
+            internal_links = len(links) - external_links
+            
+            has_code = bool(soup.find(['code', 'pre']) or re.search(r'```|`[^`]+`', cleaned_content))
+            has_math = bool(re.search(r'\$[^$]+\$|\\\([^)]+\\\)|\\\[[^]]+\\\]', cleaned_content))
+            has_data_tables = len(soup.find_all('table')) > 0
+            
+            citations = len(re.findall(r'\[[0-9]+\]|\([A-Za-z]+\s+et\s+al\.?,?\s+[0-9]{4}\)', cleaned_content))
+            
+            return {
+                'page_title': page_title,
+                'content_type': raw_capture.get('content_type', 'text/html'),
+                'word_count': len(cleaned_content.split()),
+                'heading_hierarchy': heading_hierarchy,
+                'link_count': len(links),
+                'list_items_count': len(soup.find_all(['li'])),
+                'table_count': len(soup.find_all('table')),
+                'image_count': len(soup.find_all('img')),
+                'video_count': len(soup.find_all(['video', 'iframe'])),
+                'has_code': has_code,
+                'has_math': has_math,
+                'has_data_tables': has_data_tables,
+                'external_links': external_links,
+                'internal_links': internal_links,
+                'citations': citations
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"Error extracting content metadata: {str(e)}")
+            return {
+                'page_title': 'Unknown',
+                'content_type': 'text/html',
+                'word_count': len(cleaned_content.split()),
+                'heading_hierarchy': [],
+                'link_count': 0,
+                'list_items_count': 0,
+                'table_count': 0,
+                'image_count': 0,
+                'video_count': 0,
+                'has_code': False,
+                'has_math': False,
+                'has_data_tables': False,
+                'external_links': 0,
+                'internal_links': 0,
+                'citations': 0
+            }
+
+        
+
+        
+
+        
+
+        
