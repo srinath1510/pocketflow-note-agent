@@ -337,8 +337,46 @@ class CaptureIngestionNode(BaseNode):
             'viewport_size': raw_capture.get('viewport_size', 'unknown')
         }
 
+    def _is_external_link(self, href: str, base_url: str) -> bool:
+        """Helper method: Check if a link is external to the current domain."""
+        try:
+            base_domain = urlparse(base_url).netloc.lower()
+            link_domain = urlparse(href).netloc.lower()
+            return link_domain and link_domain != base_domain
+        except Exception:
+            return False
+            
 
+    def _classify_content_type(self, content: str, url: str) -> str:
+        """Helper method: Classify content type based on patterns."""
+        # Definitely needs refinement
+        content_lower = content.lower()
+        url_lower = url.lower()
+        
+        for content_type, patterns in self.content_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, content_lower) or re.search(pattern, url_lower):
+                    return content_type
+        
+        return 'general'
 
+    def _estimate_knowledge_level(self, content: str) -> str:
+        """Helper method: Estimate knowledge level required for content."""
+        # Simple heuristic based on vocabulary complexity -- needs refinement
+        word_count = len(content.split())
+        if word_count < 100:
+            return 'basic'
+        
+        # Count technical terms, jargon, complex sentences
+        technical_indicators = len(re.findall(r'\b[A-Z]{2,}\b|\b\w{10,}\b', content))
+        technical_ratio = technical_indicators / max(word_count, 1)
+        
+        if technical_ratio > 0.05:
+            return 'advanced'
+        elif technical_ratio > 0.02:
+            return 'intermediate'
+        else:
+            return 'basic'
         
 
         
