@@ -154,6 +154,70 @@ class CaptureIngestionNode(BaseNode):
         content_metadata = self._extract_content_metadata(raw_capture, cleaned_content)
         behavior_metadata = self._analyze_user_behavior(raw_capture)
 
+        processed_capture = {
+            'id': capture_id,
+            'url': raw_capture['url'],
+            'content': cleaned_content,
+            'highlights': raw_capture.get('highlights', []),
+            'metadata': {
+                # Core identification
+                'capture_id': capture_id,
+                'timestamp': timestamp.isoformat(),
+                'timezone': str(timestamp.tzinfo),
+                'annotation_timestamp': datetime.now(timezone.utc).isoformat(),
+                
+                # Page context
+                'page_title': content_metadata['page_title'],
+                'domain': url_info['domain'],
+                'language': content_metadata.get('language', 'en-US'),
+                'content_type': content_metadata['content_type'],
+                
+                # Selection details
+                'selected_text': raw_capture.get('selected_text', ''),
+                'word_count': content_metadata['word_count'],
+                'selection_length': len(raw_capture.get('selected_text', '')),
+                'context_before': raw_capture.get('context_before', ''),
+                'context_after': raw_capture.get('context_after', ''),
+                'selection_start_offset': raw_capture.get('selection_start_offset', 0),
+                'selection_end_offset': raw_capture.get('selection_end_offset', 0),
+                'relative_position': raw_capture.get('relative_position', 0.0),
+                
+                # Page structure
+                'full_page_word_count': content_metadata['word_count'],
+                'heading_hierarchy': content_metadata['heading_hierarchy'],
+                'link_count': content_metadata['link_count'],
+                'list_items_count': content_metadata['list_items_count'],
+                'table_count': content_metadata['table_count'],
+                'image_count': content_metadata['image_count'],
+                'video_count': content_metadata['video_count'],
+                
+                # Content type indicators
+                'has_code': content_metadata['has_code'],
+                'has_math': content_metadata['has_math'],
+                'has_data_tables': content_metadata['has_data_tables'],
+                'external_links': content_metadata['external_links'],
+                'internal_links': content_metadata['internal_links'],
+                'citations': content_metadata['citations'],
+                
+                # User behavior
+                'time_on_page': behavior_metadata['time_on_page'],
+                'scroll_depth_at_selection': behavior_metadata['scroll_depth'],
+                'viewport_size': behavior_metadata['viewport_size'],
+                
+                # Classification
+                'content_category': self._classify_content_type(cleaned_content, raw_capture['url']),
+                'knowledge_level': self._estimate_knowledge_level(cleaned_content),
+                'primary_domain': url_info['domain'],
+                
+                # Technical
+                'browser': raw_capture.get('user_agent', 'Unknown'),
+                'capture_trigger': raw_capture.get('trigger', 'unknown'),
+                'intent': raw_capture.get('intent', 'general')
+            }
+        }
+
+        return processed_capture
+
     
     def _parse_timestamp(self, timestamp_str: str) -> datetime:
         """Helper method: Parse timestamp string into datetime object."""
