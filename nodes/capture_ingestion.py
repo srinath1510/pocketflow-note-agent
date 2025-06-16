@@ -152,6 +152,7 @@ class CaptureIngestionNode(BaseNode):
 
         cleaned_content = self._clean_html_content(raw_capture['content'])
         content_metadata = self._extract_content_metadata(raw_capture, cleaned_content)
+        behavior_metadata = self._analyze_user_behavior(raw_capture)
 
     
     def _parse_timestamp(self, timestamp_str: str) -> datetime:
@@ -264,7 +265,15 @@ class CaptureIngestionNode(BaseNode):
                 'citations': 0
             }
 
-        
+    def _analyze_user_behavior(self, raw_capture: Dict[str, Any]) -> Dict[str, Any]:
+        """Helper method: Analyze user behavior patterns from capture data."""
+        return {
+            'time_on_page': raw_capture.get('dwell_time', raw_capture.get('time_on_page', 0)),
+            'scroll_depth': raw_capture.get('scroll_depth_at_selection', raw_capture.get('scroll_depth', 0)),
+            'viewport_size': raw_capture.get('viewport_size', 'unknown')
+        }
+
+
 
         
 
