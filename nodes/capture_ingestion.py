@@ -146,8 +146,26 @@ class CaptureIngestionNode(BaseNode):
         """
         self.logger.info("Starting Capture Ingestion post-execution")
         
+        processed_captures = shared_state.get('raw_captures', [])
+        validation_results = shared_state.get('validation_results', {})
+
+        processing_summary = {
+            'total_input_captures': validation_results.get('total_captures', 0),
+            'successfully_processed': len(processed_captures),
+            'processing_success_rate': len(processed_captures) / max(validation_results.get('valid_captures', 1), 1),
+            'content_types_detected': self._analyze_content_types(processed_captures),
+            'domains_processed': list(set(capture['metadata']['domain'] for capture in processed_captures)),
+            'average_content_length': sum(len(capture['content']) for capture in processed_captures) / max(len(processed_captures), 1)
+        }
         
-        self.logger.info("Post-execution complete")
+        shared_state['pipeline_metadata']['capture_ingestion_summary'] = processing_summary
+        shared_state['pipeline_metadata']['capture_ingestion_end'] = datetime.now(timezone.utc).isoformat()
+
+        # cleanup temp data
+        shared_state.pop('captures_to_process', None)
+        shared_state.pop('validation_results', None)
+
+        self.logger.info("Post-execution complete - ready to pass to next node")
         return shared_state
 
 
@@ -377,6 +395,7 @@ class CaptureIngestionNode(BaseNode):
         
         return 'general'
 
+
     def _estimate_knowledge_level(self, content: str) -> str:
         """Helper method: Estimate knowledge level required for content."""
         # Simple heuristic based on vocabulary complexity -- needs refinement
@@ -394,7 +413,15 @@ class CaptureIngestionNode(BaseNode):
             return 'intermediate'
         else:
             return 'basic'
-        
+
+
+    def _analyze_content_types(self, processed_captures: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Distribution of content types in processed captures."""
+        content_types = {}
+        for capture in processed_captures:
+            content_type = capture['metadata']['content_category']
+            content_types[content_type] = content_types.get(content_type, 0) + 1
+        return content_types
 
         
 
