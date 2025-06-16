@@ -134,6 +134,23 @@ class CaptureIngestionNode(BaseNode):
         return shared_state
 
 
+    async def post(self, shared_state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Post-processing: Finalize capture ingestion and prepare for next node.
+        
+        Args:
+            shared_state: The shared state dictionary
+            
+        Returns:
+            Updated shared state
+        """
+        self.logger.info("Starting Capture Ingestion post-execution")
+        
+        
+        self.logger.info("Post-execution complete")
+        return shared_state
+
+
     def _process_single_capture(self, raw_capture: Dict[str, Any], index: int) -> Dict[str, Any]:
         """
        Helper method: Process a single capture through all transformation steps.
