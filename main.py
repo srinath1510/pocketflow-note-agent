@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List
 
-from pocketflow import PipelineRunner
+from pocketflow import Flow
 from nodes.capture_ingestion import CaptureIngestionNode
 from config.pipeline_config import PipelineConfig
 
@@ -32,11 +32,13 @@ class NoteGenerationPipeline:
         self.config = PipelineConfig(config_path)
         self.setup_logging()
         self.logger = logging.getLogger(__name__)
+
+        self.capture_ingestion_node = CaptureIngestionNode()
         
-        self.runner = PipelineRunner()
-        
-        # Register nodes in execution order
-        self._register_nodes()
+        self.flow = Flow(self.capture_ingestion_node)
+
+        # TODO: Add additional nodes as they are implemented
+
         
     def setup_logging(self):
         """Configure logging based on pipeline configuration."""
@@ -51,36 +53,6 @@ class NoteGenerationPipeline:
             ]
         )
         
-    def _register_nodes(self):
-        """Register all pipeline nodes in execution order."""
-        self.logger.info("Registering pipeline nodes")
-        
-        # Node 1: Capture Ingestion
-        self.runner.add_node("capture_ingestion", CaptureIngestionNode())
-        
-        # TODO: Add additional nodes as they are implemented
-        # Node 2: Content Analysis & Concept Extraction
-        # self.runner.add_node("content_analysis", ContentAnalysisNode())
-        
-        # Node 3: Cross-Capture Relationship Mapping
-        # self.runner.add_node("relationship_mapping", RelationshipMappingNode())
-        
-        # Node 4: Note Structure Planning
-        # self.runner.add_node("structure_planning", StructurePlanningNode())
-        
-        # Node 5: Content Generation & Template Application
-        # self.runner.add_node("content_generation", ContentGenerationNode())
-        
-        # Node 6: Link Weaving & Cross-Reference Generation
-        # self.runner.add_node("link_weaving", LinkWeavingNode())
-        
-        # Node 7: Quality Assurance & Validation
-        # self.runner.add_node("quality_assurance", QualityAssuranceNode())
-        
-        # Node 8: Vault Assembly & Export
-        # self.runner.add_node("vault_assembly", VaultAssemblyNode())
-        
-        self.logger.info(f"Registered {len(self.runner.nodes)} nodes")
         
     def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -109,15 +81,15 @@ class NoteGenerationPipeline:
         
         try:
             # Execute pipeline
-            result = self.runner.run(shared_state)
+            self.flow.run(shared_state)
             
             # Add completion metadata
-            result["pipeline_metadata"]["end_time"] = datetime.now(timezone.utc).isoformat()
-            result["pipeline_metadata"]["status"] = "completed"
-            result["pipeline_stage"] = "completed"
+            shared_state["pipeline_metadata"]["end_time"] = datetime.now(timezone.utc).isoformat()
+            shared_state["pipeline_metadata"]["status"] = "completed"
+            shared_state["pipeline_stage"] = "completed"
             
             self.logger.info(f"Pipeline execution completed successfully - Session ID: {session_id}")
-            return result
+            return shared_state
             
         except Exception as e:
             self.logger.error(f"Pipeline execution failed: {str(e)}", exc_info=True)
@@ -127,8 +99,8 @@ class NoteGenerationPipeline:
             shared_state["pipeline_metadata"]["status"] = "failed"
             shared_state["pipeline_metadata"]["error"] = str(e)
             shared_state["pipeline_stage"] = "failed"
-            
             raise
+
     
     def run_single_node(self, node_name: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -157,15 +129,12 @@ class NoteGenerationPipeline:
         
         try:
             # Get the specific node
-            if node_name not in self.runner.nodes:
+            if node_name == "capture_ingestion":
+                node = self.capture_ingestion_node
+            else:
                 raise ValueError(f"Node '{node_name}' not found in pipeline")
             
-            node = self.runner.nodes[node_name]
-            
-            # Execute node phases
-            shared_state = node.prep(shared_state)
-            shared_state = node.execCore(shared_state)
-            shared_state = node.post(shared_state)
+            node.run(shared_state)
             
             # Add completion metadata
             shared_state["pipeline_metadata"]["end_time"] = datetime.now(timezone.utc).isoformat()

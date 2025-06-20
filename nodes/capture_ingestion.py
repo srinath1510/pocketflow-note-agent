@@ -4,6 +4,20 @@ Capture Ingestion Node: This node handles the initial processing and validation 
 from Chrome extension captures, preparing them for downstream analysis.
 """
 
+import json
+import logging
+from datetime import datetime, timezone
+from typing import Dict, List, Any, Optional
+from urllib.parse import urlparse, parse_qs
+import re
+
+from bs4 import BeautifulSoup
+import html2text
+from dateutil import parser as date_parser
+import validators
+
+from pocketflow import Node as BaseNode
+
 class CaptureIngestionNode(BaseNode):
     """
     Node 1: Capture Ingestion
@@ -53,7 +67,7 @@ class CaptureIngestionNode(BaseNode):
             ]
         }
 
-    async def prep(self, shared_state: Dict[str, Any]) -> Dict[str, Any]:
+    def prep(self, shared_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Prepare for capture ingestion by validating input data structure. Namely, if url, content and timestamp is present for each captured note. 
         
@@ -67,13 +81,20 @@ class CaptureIngestionNode(BaseNode):
         
         shared_state.setdefault('pipeline_metadata', {})
         shared_state['pipeline_metadata']['capture_ingestion_start'] = datetime.now(timezone.utc).isoformat()
+
+        validation_results = {
+            'total_captures': 0,
+            'valid_captures': 0,
+            'invalid_captures': 0,
+            'invalid_details': []
+        }
         
         raw_input = shared_state.get('raw_input', {})
         
         if not raw_input:
             self.logger.error("No raw input data found in shared state")
             shared_state['pipeline_metadata']['capture_ingestion_error'] = "No raw input data"
-            return shared_state
+            return {'captures_to_process': [], 'validation_results': {'total_captures': 0, 'valid_captures': 0}}
         
         required_fields = ['url', 'content', 'timestamp']
         captures = raw_input if isinstance(raw_input, list) else [raw_input]
@@ -89,32 +110,28 @@ class CaptureIngestionNode(BaseNode):
             else:
                 valid_captures.append(capture)
         
-        shared_state['validation_results'] = {
-            'total_captures': len(captures),
-            'valid_captures': len(valid_captures),
-            'invalid_captures': len(invalid_captures),
-            'invalid_details': invalid_captures
-        }
-        
-        shared_state['captures_to_process'] = valid_captures
-        
+        validation_results['total_captures'] = len(captures)
+        validation_results['valid_captures'] = len(valid_captures)
+        validation_results['invalid_captures'] = len(invalid_captures)
+        validation_results['invalid_details'] = invalid_captures
+                        
         self.logger.info(f"Prep complete: {len(valid_captures)} valid captures out of {len(captures)}")
-        return shared_state
+        return {'captures_to_process': valid_captures, 'validation_results': validation_results}
     
 
-    async def exec(self, prep_result: Dict[str, Any]) -> Dict[str, Any]:
+    def exec(self, prep_result: Dict[str, Any]) -> Dict[str, Any]:
         """
         Core execution: Process each capture through cleaning, normalization, and metadata extraction.
         
         Args:
-            shared_state: The shared state dictionary
+            prep_result: Result from prep phase
             
         Returns:
-            Updated shared state with processed captures
+            Processed captures
         """
         self.logger.info("Starting Capture Ingestion core execution")
         
-        captures_to_process = shared_state.get('captures_to_process', [])
+        captures_to_process = prep_result.get('captures_to_process', [])
         processed_captures = []
         
         for i, raw_capture in enumerate(captures_to_process):
@@ -127,46 +144,44 @@ class CaptureIngestionNode(BaseNode):
                 self.logger.error(f"Error processing capture {i}: {str(e)}")
                 continue
         
-        shared_state['raw_captures'] = processed_captures
-        shared_state['pipeline_metadata']['captures_processed'] = len(processed_captures)
-        
         self.logger.info(f"Core execution complete: {len(processed_captures)} captures processed")
-        return shared_state
+        return {'processed_captures': processed_captures, 'validation_results': prep_result['validation_results']}
 
 
-    async def post(self, shared_state: Dict[str, Any]) -> Dict[str, Any]:
+    def post(self, shared_state: Dict[str, Any], prep_result: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
         """
         Post-processing: Finalize capture ingestion and prepare for next node.
         
         Args:
             shared_state: The shared state dictionary
+            prep_result: Result from prep phase
+            exec_result: Result from exec phase
             
         Returns:
-            Updated shared state
+            Action for next node ("default" for now)
         """
-        self.logger.info("Starting Capture Ingestion post-execution")
+        self.logger.info("Starting Capture Ingestion post-execution phase")
         
-        processed_captures = shared_state.get('raw_captures', [])
-        validation_results = shared_state.get('validation_results', {})
+        processed_captures = exec_result.get('processed_captures', [])
+        validation_results = exec_result.get('validation_results', {})
+
+        shared_state['raw_captures'] = processed_captures
 
         processing_summary = {
             'total_input_captures': validation_results.get('total_captures', 0),
             'successfully_processed': len(processed_captures),
             'processing_success_rate': len(processed_captures) / max(validation_results.get('valid_captures', 1), 1),
             'content_types_detected': self._analyze_content_types(processed_captures),
-            'domains_processed': list(set(capture['metadata']['domain'] for capture in processed_captures)),
-            'average_content_length': sum(len(capture['content']) for capture in processed_captures) / max(len(processed_captures), 1)
+            'domains_processed': list(set(capture['metadata']['domain'] for capture in processed_captures)) if processed_captures else [],
+            'average_content_length': sum(len(capture['content']) for capture in processed_captures) / max(len(processed_captures), 1) if processed_captures else 0
         }
         
         shared_state['pipeline_metadata']['capture_ingestion_summary'] = processing_summary
         shared_state['pipeline_metadata']['capture_ingestion_end'] = datetime.now(timezone.utc).isoformat()
-
-        # cleanup temp data
-        shared_state.pop('captures_to_process', None)
-        shared_state.pop('validation_results', None)
+        shared_state['pipeline_metadata']['captures_processed'] = len(processed_captures)
 
         self.logger.info("Post-execution complete - ready to pass to next node")
-        return shared_state
+        return "default"
 
 
     def _process_single_capture(self, raw_capture: Dict[str, Any], index: int) -> Dict[str, Any]:
