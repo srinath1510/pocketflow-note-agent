@@ -14,6 +14,8 @@ import os
 import traceback
 import sys
 from pathlib import Path
+import hashlib
+from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +26,6 @@ app = Flask(__name__)
 # Enable CORS for Chrome extension
 CORS(app, origins=["chrome-extension://*", "http://localhost:*"])
 
-# ADDED: Enable debug mode for development
 app.config['DEBUG'] = True
 
 # In-memory storage
@@ -41,7 +42,24 @@ RESULTS_DIR = Path("data/results")
 for dir_path in [NOTES_DIR, BATCHES_DIR, RESULTS_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
 
-# ADDED: Global error handler for debugging 500 errors
+processed_batches = set()  # Track processed batch IDs
+processed_bakes = set()    # Track processed bake IDs
+content_hashes = set()     # Track content hashes
+last_bake_time = None      # Track last bake time
+BAKE_THROTTLE_SECONDS = 10 # Minimum seconds between bakes
+
+def hash_content(content):
+    """Create hash of content to detect duplicates"""
+    return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+def is_duplicate_content(note_content):
+    """Check if content is duplicate"""
+    content_hash = hash_content(note_content)
+    if content_hash in content_hashes:
+        return True
+    content_hashes.add(content_hash)
+    return False
+
 @app.errorhandler(500)
 def internal_error(error):
     """Handle 500 errors with detailed information"""
@@ -55,7 +73,6 @@ def internal_error(error):
         'debug': str(traceback.format_exc()) if app.debug else None
     }), 500
 
-# ADDED: Exception handler for unhandled exceptions
 @app.errorhandler(Exception)
 def handle_exception(e):
     """Handle all unhandled exceptions"""
@@ -100,7 +117,6 @@ def health_check():
             'timestamp': datetime.now(timezone.utc).isoformat()
         }), 500
 
-# ADDED: Status endpoint for detailed server information
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get detailed server status"""
@@ -141,9 +157,36 @@ def receive_batch():
             return jsonify({"error": "No notes in batch"}), 400
         
         batch_id = data.get('batch_id', str(uuid.uuid4()))
+
+        if batch_id in processed_batches:
+            logger.warning(f"Duplicate batch detected: {batch_id}")
+            return jsonify({
+                "success": True,
+                "status": "duplicate",
+                "batch_id": batch_id,
+                "message": "Batch already processed",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }), 200
+
         notes = data['notes']
         
         logger.info(f"Processing batch {batch_id} with {len(notes)} notes")
+
+        unique_notes = []
+        duplicate_count = 0
+        
+        for note in notes:
+            note_content = note.get('content', '')
+            if note_content and not is_duplicate_content(note_content):
+                unique_notes.append(note)
+            else:
+                duplicate_count += 1
+                logger.info(f"Skipping duplicate note: {note_content[:50]}...")
+        
+        logger.info(f"Filtered {duplicate_count} duplicates, processing {len(unique_notes)} unique notes")
+        
+        # Mark batch as processed
+        processed_batches.add(batch_id)
         
         # Store batch metadata
         batch_info = {
@@ -156,32 +199,35 @@ def receive_batch():
         }
         
         # Save to file
-        batch_file = BATCHES_DIR / f"{batch_id}.json"
-        with open(batch_file, 'w') as f:
-            json.dump({
-                "batch_info": batch_info,
-                "notes": notes
-            }, f, indent=2)
-        
-        # Store in memory
-        batches_storage.append(batch_info)
-        notes_storage.extend(notes)
+        if unique_notes:
+            batch_file = BATCHES_DIR / f"{batch_id}.json"
+            with open(batch_file, 'w') as f:
+                json.dump({
+                    "batch_info": batch_info,
+                    "notes": unique_notes
+                }, f, indent=2)
+            
+            # Store in memory
+            notes_storage.extend(unique_notes)
         
         # Process in background thread
-        thread = threading.Thread(target=process_batch_background, args=(batch_id, notes))
+        thread = threading.Thread(target=process_batch_background, args=(batch_id, unique_notes))
         thread.daemon = True
         thread.start()
+
+        batches_storage.append(batch_info)
         
         logger.info(f"Batch {batch_id} queued for processing")
         
-        # UPDATED: Return Flask API compatible response format
         response = {
             "success": True,
             "status": "success",
             "batch_id": batch_id,
             "notes_received": len(notes),
-            "notes_count": len(notes),
-            "message": "Batch received and queued for processing",
+            "notes_processed": len(unique_notes),
+            "duplicates_filtered": duplicate_count,
+            "notes_count": len(unique_notes),
+            "message": f"Batch received: {len(unique_notes)} unique notes, {duplicate_count} duplicates filtered",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
@@ -200,14 +246,42 @@ def receive_batch():
 @app.route('/api/bake', methods=['POST'])
 def trigger_bake():
     """Trigger the AI processing pipeline (bake) on collected notes"""
+    global last_bake_time
     try:
         logger.info("=== BAKE REQUEST ===")
+
+        current_time = datetime.now(timezone.utc)
+        
+        if last_bake_time is not None:
+            time_diff = (current_time - last_bake_time).total_seconds()
+            if time_diff < BAKE_THROTTLE_SECONDS:
+                wait_time = BAKE_THROTTLE_SECONDS - time_diff
+                logger.warning(f"Bake throttled. {wait_time:.1f} seconds remaining.")
+                return jsonify({
+                    "success": False,
+                    "error": f"Please wait {wait_time:.1f} seconds before starting another bake.",
+                    "throttle_remaining": wait_time,
+                    "timestamp": current_time.isoformat()
+                }), 429  # Too Many Requests
         
         data = request.get_json() or {}
         logger.info(f"Bake data: {data}")
         
-        # Generate bake ID
-        bake_id = str(uuid.uuid4())
+        bake_id = data.get('bake_id', str(uuid.uuid4()))
+
+        if bake_id in processed_bakes:
+            logger.warning(f"Duplicate bake detected: {bake_id}")
+            return jsonify({
+                "success": True,
+                "status": "duplicate",
+                "bake_id": bake_id,
+                "message": "Bake already processed",
+                "timestamp": current_time.isoformat()
+            }), 200
+
+        # Mark bake as processed
+        processed_bakes.add(bake_id)
+        last_bake_time = current_time
         
         # Prepare bake data
         bake_data = {
@@ -232,7 +306,6 @@ def trigger_bake():
         
         logger.info(f"Bake {bake_id} initiated with {len(notes_storage)} notes")
         
-        # UPDATED: Return Flask API compatible response format
         response = {
             "success": True,
             "status": "success",
@@ -321,7 +394,39 @@ def clear_notes():
         logger.error(f"Error clearing notes: {str(e)}")
         return jsonify({"error": f"Error clearing notes: {str(e)}"}), 500
 
-# ADDED: Root endpoint for basic server info
+@app.route('/api/cleanup', methods=['POST'])
+def cleanup_data():
+    """Clean up old processed IDs and duplicate tracking"""
+    global processed_batches, processed_bakes, content_hashes
+    
+    try:
+        # Keep only recent IDs (last 1000 each)
+        if len(processed_batches) > 1000:
+            processed_batches = set(list(processed_batches)[-500:])
+        
+        if len(processed_bakes) > 1000:
+            processed_bakes = set(list(processed_bakes)[-500:])
+        
+        if len(content_hashes) > 5000:
+            content_hashes = set(list(content_hashes)[-2500:])
+        
+        logger.info("Cleanup completed")
+        
+        return jsonify({
+            "success": True,
+            "message": "Cleanup completed",
+            "stats": {
+                "processed_batches": len(processed_batches),
+                "processed_bakes": len(processed_bakes),
+                "content_hashes": len(content_hashes)
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Cleanup error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/')
 def root():
     """Root endpoint"""
@@ -389,7 +494,7 @@ def process_bake_background(bake_data):
         # Simulate processing time
         time.sleep(5)
         
-        # TODO: Integrate with your main.py pipeline here
+        # TODO: Integrate with main.py pipeline here
         bake_result = {
             "bake_id": bake_data["bake_id"],
             "status": "completed",
@@ -442,7 +547,6 @@ if __name__ == "__main__":
     print("Press Ctrl+C to stop the server")
     print("=" * 50)
     
-    # UPDATED: Use Flask's built-in WSGI server instead of any ASGI server
     app.run(
         host="localhost",  # Changed from "0.0.0.0" for local development
         port=8000, 
