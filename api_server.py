@@ -60,6 +60,7 @@ def is_duplicate_content(note_content):
     content_hashes.add(content_hash)
     return False
 
+
 @app.errorhandler(500)
 def internal_error(error):
     """Handle 500 errors with detailed information"""
@@ -72,6 +73,7 @@ def internal_error(error):
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'debug': str(traceback.format_exc()) if app.debug else None
     }), 500
+
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -86,6 +88,7 @@ def handle_exception(e):
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'debug': str(traceback.format_exc()) if app.debug else None
     }), 500
+
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -117,6 +120,7 @@ def health_check():
             'timestamp': datetime.now(timezone.utc).isoformat()
         }), 500
 
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get detailed server status"""
@@ -138,6 +142,7 @@ def get_status():
     except Exception as e:
         logger.error(f"Status endpoint error: {e}")
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/notes/batch', methods=['POST'])
 def receive_batch():
@@ -193,12 +198,14 @@ def receive_batch():
             "batch_id": batch_id,
             "timestamp": data.get('timestamp', datetime.now(timezone.utc).isoformat()),
             "batch_size": len(notes),
+            "unique_notes": len(unique_notes),
+            "duplicates_filtered": duplicate_count,
             "status": "received",
-            "notes_count": len(notes),
+            "notes_count": len(unique_notes),
             "processing_mode": data.get('processing_mode', 'default')
         }
         
-        # Save to file
+        # Save to file only if we got unique notes
         if unique_notes:
             batch_file = BATCHES_DIR / f"{batch_id}.json"
             with open(batch_file, 'w') as f:
@@ -207,14 +214,26 @@ def receive_batch():
                     "notes": unique_notes
                 }, f, indent=2)
             
-            # Store in memory
-            notes_storage.extend(unique_notes)
-        
-        # Process in background thread
-        thread = threading.Thread(target=process_batch_background, args=(batch_id, unique_notes))
-        thread.daemon = True
-        thread.start()
+            timestamped_notes = []
+            for note in unique_notes:
+                note['stored_at'] = datetime.now(timezone.utc).isoformat()
+                timestamped_notes.append(note)
+            
+            # Store in memory for display
+            notes_storage.extend(timestamped_notes)
 
+            # Background file saving
+            file_thread = threading.Thread(target=save_individual_notes_background, args=(unique_notes, batch_id))
+            file_thread.daemon = True
+            file_thread.start()
+            
+            # Process in background thread
+            process_thread = threading.Thread(target=process_batch_background, args=(batch_id, unique_notes))
+            process_thread.daemon = True
+            process_thread.start()
+
+            
+        
         batches_storage.append(batch_info)
         
         logger.info(f"Batch {batch_id} queued for processing")
@@ -242,6 +261,7 @@ def receive_batch():
             "error": f"Error processing batch: {str(e)}",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), 500
+
 
 @app.route('/api/bake', methods=['POST'])
 def trigger_bake():
@@ -331,26 +351,52 @@ def trigger_bake():
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), 500
 
+
 @app.route('/api/notes', methods=['GET'])
 def get_notes():
-    """Get stored notes with pagination"""
+    """Get stored notes from memory (for popup display)"""
     try:
         limit = int(request.args.get('limit', 50))
         offset = int(request.args.get('offset', 0))
-        
         total = len(notes_storage)
         notes = notes_storage[offset:offset + limit]
         
+        display_notes = []
+        for i, note in enumerate(notes):
+            display_note = {
+                "id": note.get('id') or note.get('metadata', {}).get('local_id') or f"note_{offset + i}",
+                "title": note.get('source', {}).get('title', 'Untitled'),
+                "url": note.get('source', {}).get('url', ''),
+                "content_preview": note.get('content', '')[:200] + ('...' if len(note.get('content', '')) > 200 else ''),
+                "content_full": note.get('content', ''),
+                "captured_at": note.get('metadata', {}).get('captured_at', 'unknown'),
+                "stored_at": note.get('stored_at', 'unknown'),
+                "category": note.get('metadata', {}).get('content_category', 'general'),
+                "tags": note.get('metadata', {}).get('tags', []),
+                "word_count": len(note.get('content', '').split()),
+                "raw_note": note  # Full original note data
+            }
+            display_notes.append(display_note)
+
         return jsonify({
-            "notes": notes,
-            "total": total,
-            "limit": limit,
-            "offset": offset,
+            "notes": display_notes,
+            "pagination": {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": (offset + limit) < total
+            },
+            "stats": {
+                "total_notes": total,
+                "returned": len(display_notes),
+                "memory_usage": "display_optimized"
+            },
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
     except Exception as e:
         logger.error(f"Error retrieving notes: {str(e)}")
         return jsonify({"error": f"Error retrieving notes: {str(e)}"}), 500
+
 
 @app.route('/api/batches', methods=['GET'])
 def get_batches():
@@ -365,6 +411,7 @@ def get_batches():
         logger.error(f"Error retrieving batches: {str(e)}")
         return jsonify({"error": f"Error retrieving batches: {str(e)}"}), 500
 
+
 @app.route('/api/results', methods=['GET'])
 def get_results():
     """Get processing results"""
@@ -377,6 +424,7 @@ def get_results():
     except Exception as e:
         logger.error(f"Error retrieving results: {str(e)}")
         return jsonify({"error": f"Error retrieving results: {str(e)}"}), 500
+
 
 @app.route('/api/notes', methods=['DELETE'])
 def clear_notes():
@@ -393,6 +441,7 @@ def clear_notes():
     except Exception as e:
         logger.error(f"Error clearing notes: {str(e)}")
         return jsonify({"error": f"Error clearing notes: {str(e)}"}), 500
+
 
 @app.route('/api/cleanup', methods=['POST'])
 def cleanup_data():
@@ -445,6 +494,34 @@ def root():
             'results': '/api/results'
         }
     })
+
+
+@app.route('/api/notes/files', methods=['GET'])
+def get_notes_files_info():
+    """Get information about stored note files (utility endpoint)"""
+    try:
+        note_files = list(NOTES_DIR.glob("note_*.json"))
+        
+        file_info = []
+        for note_file in note_files:
+            file_info.append({
+                "filename": note_file.name,
+                "size_bytes": note_file.stat().st_size,
+                "created_at": datetime.fromtimestamp(note_file.stat().st_ctime).isoformat(),
+                "modified_at": datetime.fromtimestamp(note_file.stat().st_mtime).isoformat()
+            })
+        
+        return jsonify({
+            "file_count": len(file_info),
+            "files": file_info,
+            "total_size_bytes": sum(f["size_bytes"] for f in file_info),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting file info: {str(e)}")
+        return jsonify({"error": f"Error getting file info: {str(e)}"}), 500
+
 
 def process_batch_background(batch_id, notes):
     """Background processing of a batch of notes"""
@@ -528,6 +605,38 @@ def process_bake_background(bake_data):
     except Exception as e:
         logger.error(f"Error processing bake {bake_data['bake_id']}: {str(e)}")
         logger.error(traceback.format_exc())
+
+
+def save_individual_notes_background(notes, batch_id):
+    """Save individual notes to files in background (for persistence)"""
+    try:
+        logger.info(f"Background saving {len(notes)} notes to files")
+        
+        for i, note in enumerate(notes):
+            note_id = note.get('id') or note.get('metadata', {}).get('local_id') or f"{batch_id}_note_{i}"
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            
+            note_filename = f"note_{timestamp}_{note_id}.json"
+            note_file = NOTES_DIR / note_filename
+            
+            note_data = {
+                "note_id": note_id,
+                "batch_id": batch_id,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+                "source": note.get('source', {}),
+                "metadata": note.get('metadata', {}),
+                "content": note.get('content', ''),
+                "original_note": note
+            }
+            
+            # Save individual note
+            with open(note_file, 'w') as f:
+                json.dump(note_data, f, indent=2)
+            
+        logger.info(f"Background file save completed for batch {batch_id}")
+            
+    except Exception as e:
+        logger.error(f"Error in background file saving: {str(e)}")
 
 if __name__ == "__main__":
     print("🚀 Starting Smart Notes Flask API Server...")
