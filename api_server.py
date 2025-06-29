@@ -17,6 +17,8 @@ from pathlib import Path
 import hashlib
 from collections import defaultdict
 
+from pipeline_orchestrator import PipelineOrchestrator
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,14 @@ processed_bakes = set()    # Track processed bake IDs
 content_hashes = set()     # Track content hashes
 last_bake_time = None      # Track last bake time
 BAKE_THROTTLE_SECONDS = 10 # Minimum seconds between bakes
+
+try:
+    pipeline_orchestrator = PipelineOrchestrator()
+    logger.info("Pipeline orchestrator initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize pipeline orchestrator: {str(e)}")
+    pipeline_orchestrator = None
+
 
 def hash_content(content):
     """Create hash of content to detect duplicates"""
@@ -231,8 +241,6 @@ def receive_batch():
             process_thread = threading.Thread(target=process_batch_background, args=(batch_id, unique_notes))
             process_thread.daemon = True
             process_thread.start()
-
-            
         
         batches_storage.append(batch_info)
         
@@ -484,6 +492,7 @@ def root():
         'version': '1.0.0',
         'server_type': 'Flask WSGI',
         'timestamp': datetime.now(timezone.utc).isoformat(),
+        'pipeline_status': 'available' if pipeline_orchestrator else 'unavailable',
         'endpoints': {
             'health': '/api/health',
             'status': '/api/status',
@@ -565,47 +574,84 @@ def process_batch_background(batch_id, notes):
 
 def process_bake_background(bake_data):
     """Background processing of bake request"""
-    logger.info(f"Processing bake {bake_data['bake_id']} in background")
+    bake_id = bake_data['bake_id']
+    logger.info(f"Processing bake {bake_id} in background")
     
     try:
-        # Simulate processing time
-        time.sleep(5)
+        if not pipeline_orchestrator:
+            raise Exception("Pipeline orchestrator not available")
         
-        # TODO: Integrate with main.py pipeline here
-        bake_result = {
-            "bake_id": bake_data["bake_id"],
-            "status": "completed",
-            "processed_at": datetime.now(timezone.utc).isoformat(),
-            "input_notes_count": len(notes_storage),
-            "processing_summary": {
-                "total_notes_processed": len(notes_storage),
-                "categories_identified": ["technical", "research", "general"],
-                "insights_generated": 15,
-                "knowledge_connections": 8
-            },
-            "results": {
-                "summary": "Successfully processed and analyzed your captured knowledge",
-                "insights": [
-                    "Found patterns in technical documentation reading",
-                    "Identified research themes across multiple domains"
-                ]
+        session_notes = []
+        for note in notes_storage:
+            display_note = {
+                "id": note.get('id') or note.get('metadata', {}).get('local_id') or f"note_{len(session_notes)}",
+                "title": note.get('source', {}).get('title', 'Untitled'),
+                "url": note.get('source', {}).get('url', ''),
+                "content_full": note.get('content', ''),
+                "captured_at": note.get('metadata', {}).get('captured_at', 'unknown'),
+                "stored_at": note.get('stored_at', 'unknown'),
+                "raw_note": note
+            }
+            session_notes.append(display_note)
+        
+        logger.info(f"Running pipeline on {len(session_notes)} notes for bake {bake_id}")
+
+        pipeline_results = pipeline_orchestrator.run_pipeline(bake_data, session_notes)
+
+        processing_results.append(pipeline_results)
+
+        result_file = RESULTS_DIR / f"bake_{bake_id}_pipeline_result.json"
+        with open(result_file, 'w') as f:
+            json.dump(pipeline_results, f, indent=2, default=str)
+        
+        summary_result = {
+            "bake_id": bake_id,
+            "status": pipeline_results.get('status', 'unknown'),
+            "processed_at": pipeline_results.get('processed_at'),
+            "input_notes_count": pipeline_results.get('input_notes_count', 0),
+            "processing_summary": pipeline_results.get('processing_summary', {}),
+            "insights": pipeline_results.get('insights', []),
+            "results_summary": pipeline_results.get('results', {}),
+            "pipeline_metadata": {
+                "session_id": pipeline_results.get('pipeline_metadata', {}).get('session_id'),
+                "execution_time": pipeline_results.get('pipeline_metadata', {}).get('execution_time'),
+                "nodes_executed": pipeline_results.get('pipeline_metadata', {}).get('nodes_executed', [])
             }
         }
         
-        # Store result
-        processing_results.append(bake_result)
+        summary_file = RESULTS_DIR / f"bake_{bake_id}_summary.json"
+
+        with open(summary_file, 'w') as f:
+            json.dump(summary_result, f, indent=2, default=str)
         
-        # Save to file
-        result_file = RESULTS_DIR / f"bake_{bake_data['bake_id']}_result.json"
-        with open(result_file, 'w') as f:
-            json.dump(bake_result, f, indent=2)
-        
-        logger.info(f"Bake {bake_data['bake_id']} processing completed")
-        
+        logger.info(f"Pipeline bake {bake_id} completed successfully")
+        logger.info(f"Processed {pipeline_results.get('input_notes_count', 0)} notes")
+        logger.info(f"Generated {len(pipeline_results.get('insights', []))} insights")
+                
     except Exception as e:
-        logger.error(f"Error processing bake {bake_data['bake_id']}: {str(e)}")
+        logger.error(f"Error processing bake {bake_id}: {str(e)}")
         logger.error(traceback.format_exc())
 
+        error_result = {
+            "bake_id": bake_id,
+            "status": "failed",
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "input_notes_count": len(notes_storage),
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "pipeline_metadata": {
+                "error_occurred": True,
+                "nodes_executed": []
+            }
+        }
+
+        processing_results.append(error_result)
+        
+        error_file = RESULTS_DIR / f"bake_{bake_id}_error.json"
+        with open(error_file, 'w') as f:
+            json.dump(error_result, f, indent=2, default=str)
+
+        
 
 def save_individual_notes_background(notes, batch_id):
     """Save individual notes to files in background (for persistence)"""
