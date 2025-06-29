@@ -177,7 +177,7 @@ class PipelineOrchestrator:
         }
 
 
-        def _calculate_processing_stats(self, shared_state: Dict[str, Any], raw_captures: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _calculate_processing_stats(self, shared_state: Dict[str, Any], raw_captures: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Calculate processing statistics from pipeline results."""
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
         capture_summary = pipeline_metadata.get('capture_ingestion_summary', {})
@@ -217,7 +217,7 @@ class PipelineOrchestrator:
         return stats
 
 
-        def _generate_processing_insights(self, raw_captures: List[Dict[str, Any]], shared_state: Dict[str, Any]) -> List[str]:
+    def _generate_processing_insights(self, raw_captures: List[Dict[str, Any]], shared_state: Dict[str, Any]) -> List[str]:
         """Generate insights about the processed data."""
         insights = []
         
@@ -284,7 +284,7 @@ class PipelineOrchestrator:
         return insights
         
 
-        def _calculate_execution_time(self, pipeline_metadata: Dict[str, Any]) -> Optional[float]:
+    def _calculate_execution_time(self, pipeline_metadata: Dict[str, Any]) -> Optional[float]:
         """Calculate pipeline execution time in seconds."""
         try:
             start_time = pipeline_metadata.get('start_time')
