@@ -198,7 +198,7 @@ class PipelineOrchestrator:
             'content_types_detected': capture_summary.get('content_types_detected', {}),
             'domains_processed': capture_summary.get('domains_processed', []),
             'average_content_length': capture_summary.get('average_content_length', 0),
-            'captures_processed': pipeline_metadata.get('captures_processed', 0)
+            'captures_processed': pipeline_metadata.get('captures_processed', 0),
 
             # Content analysis stats
             'concepts_extracted': content_summary.get('concepts_extracted', 0),

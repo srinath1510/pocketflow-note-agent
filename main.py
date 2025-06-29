@@ -260,17 +260,17 @@ def main():
                         print(f"  ... and {len(captures) - 3} more")
                     
                 if "extracted_concepts" in result:
-                concepts = result["extracted_concepts"]
-                print(f"\nCONTENT ANALYSIS RESULTS:")
-                print(f"Key Concepts: {concepts.get('key_concepts', [])}")
-                print(f"Topics: {concepts.get('topics', [])}")
-                print(f"Entities: {list(concepts.get('entities', {}).keys())}")
-                print(f"Complexity: {concepts.get('complexity_assessment', {}).get('overall_level', 'unknown')}")
-                
-                semantic = concepts.get('semantic_analysis', {})
-                if semantic:
-                    print(f"Learning Intent: {semantic.get('primary_intent', 'unknown')}")
-                    print(f"Knowledge Domains: {semantic.get('knowledge_domains', [])}")
+                    concepts = result["extracted_concepts"]
+                    print(f"\nCONTENT ANALYSIS RESULTS:")
+                    print(f"Key Concepts: {concepts.get('key_concepts', [])}")
+                    print(f"Topics: {concepts.get('topics', [])}")
+                    print(f"Entities: {list(concepts.get('entities', {}).keys())}")
+                    print(f"Complexity: {concepts.get('complexity_assessment', {}).get('overall_level', 'unknown')}")
+                    
+                    semantic = concepts.get('semantic_analysis', {})
+                    if semantic:
+                        print(f"Learning Intent: {semantic.get('primary_intent', 'unknown')}")
+                        print(f"Knowledge Domains: {semantic.get('knowledge_domains', [])}")
             
             print("="*50)
     
