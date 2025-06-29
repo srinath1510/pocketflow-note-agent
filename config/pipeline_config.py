@@ -22,7 +22,8 @@ class PipelineConfig:
         Args:
             config_path: Optional path to configuration JSON file
         """
-        self.version = "1.0.0"
+        self.config_path = config_path 
+        self._version = "1.0.0"
         self.config_data = {}
         
         # Load configuration in order of precedence:
@@ -35,10 +36,18 @@ class PipelineConfig:
             self._load_from_file(config_path)
         
         self._load_from_environment()
+        self._setup_computed_properties()
     
     def _load_defaults(self):
         """Load default configuration values."""
         self.config_data = {
+            "version": "1.0.0",
+            "pipeline_name": "smart_notes_pipeline", 
+            "data_dir": "data",
+            "max_notes_per_batch": 100,
+            "content_max_length": 50000,
+            "log_level": "INFO",
+            "log_file": None,
             # Logging Configuration
             "logging": {
                 "log_level": "INFO",
@@ -198,15 +207,17 @@ class PipelineConfig:
         Returns:
             Configuration value or default
         """
-        keys = key.split('.')
-        value = self.config_data
-        
-        try:
-            for k in keys:
-                value = value[k]
-            return value
-        except (KeyError, TypeError):
-            return default
+        if len(path) == 1 and '.' in path[0]:
+            path = path[0].split('.')
+    
+        current = self.config_data
+        for key in path:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return default
+    
+        return current
 
 
     def set(self, *path, value):
@@ -217,15 +228,15 @@ class PipelineConfig:
             key: Configuration key (supports dot notation)
             value: Value to set
         """
-        keys = key.split('.')
-        config = self.config_data
+        if len(path) == 1 and '.' in path[0]:
+            path = path[0].split('.')
     
-        for k in keys[:-1]:
-            if k not in config or not isinstance(config[k], dict):
-                config[k] = {}
-            config = config[k]
-            
-        config[keys[-1]] = value
+        current = self.config_data
+        for key in path[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+        current[path[-1]] = value
 
     
     def save_to_file(self, config_path: str):
@@ -256,27 +267,27 @@ class PipelineConfig:
     @property
     def log_level(self) -> str:
         """Get logging level."""
-        return self.config_data["log_level"]
+        return self.get("log_level", default="INFO")
     
     @property
     def log_file(self) -> Optional[str]:
         """Get log file path."""
-        return self.config_data["log_file"]
+        return self.get("log_file")
     
     @property
     def version(self) -> str:
         """Get version."""
-        return self.config_data["version"]
+        return self.get("version", default="1.0.0")
 
     @property
     def pipeline_name(self) -> str:
         """Get pipeline name."""
-        return self.config_data["pipeline_name"]
+        return self.get("pipeline_name", default="smart_notes_pipeline")
 
     @property
     def data_dir(self) -> Path:
         """Get data directory."""
-        return Path(self.config_data["data_dir"])
+        return Path(self.get("data_dir", default="data"))
     
     @property
     def notes_dir(self) -> Path:

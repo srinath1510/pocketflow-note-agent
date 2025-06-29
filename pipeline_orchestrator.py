@@ -176,6 +176,9 @@ class PipelineOrchestrator:
             }
         }
 
+        self.logger.info(f"Formatted pipeline results for bake {bake_id}")
+        return formatted_results
+
 
     def _calculate_processing_stats(self, shared_state: Dict[str, Any], raw_captures: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Calculate processing statistics from pipeline results."""
