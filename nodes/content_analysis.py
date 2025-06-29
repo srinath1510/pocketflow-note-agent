@@ -265,7 +265,6 @@ Focus on educational/learning value. Return only valid JSON."""
     def _combine_analysis_results(self, individual_analyses: List[Dict[str, Any]], synthesis: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         """Combine individual and synthesis results into final structure."""
         
-        # Aggregate all learning concepts
         all_learning_concepts = []
         all_key_terms = {}
         all_entities = {}
@@ -281,7 +280,7 @@ Focus on educational/learning value. Return only valid JSON."""
             all_skills.extend(analysis.get('skills', []))
             all_actionable_items.extend(analysis.get('actionable_items', []))
         
-        # Remove duplicates while preserving order
+        # remove duplicates while preserving order
         unique_concepts = list(dict.fromkeys(all_learning_concepts))
         unique_methodologies = list(dict.fromkeys(all_methodologies))
         unique_skills = list(dict.fromkeys(all_skills))
@@ -321,7 +320,6 @@ Focus on educational/learning value. Return only valid JSON."""
             'capture_analyses': individual_analyses
         }
         
-        # Build content_analysis metadata
         content_analysis = {
             'method': 'llm_powered',
             'model_used': config.get('llm_model', 'gpt-3.5-turbo'),
@@ -338,13 +336,13 @@ Focus on educational/learning value. Return only valid JSON."""
         
         filtered_words = [word for word in words if word not in stop_words and len(word) > 3]
         
-        # Count frequency and get top concepts
+        # count frequency and get top concepts
         word_counts = Counter(filtered_words)
         
-        # Get words that appear more than once or are long/technical
+        # get words that appear more than once or are long/technical
         key_concepts = []
         for word, count in word_counts.most_common(20):
             if count > 1 or len(word) > 6 or any(word in pattern for patterns in self.entity_patterns.values() for pattern in patterns):
                 key_concepts.append(word)
         
-        return key_concepts[:10]  # Top 10 concepts
+        return key_concepts[:10]  # top 10 concepts
