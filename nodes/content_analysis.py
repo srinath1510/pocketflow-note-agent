@@ -55,6 +55,43 @@ class ContentAnalysisNode(BaseNode):
         """
         Prepare for content analysis by validating inputs and LLM availability.
         """
+        self.logger.info("Starting Content Analysis prep phase")
+
+        shared_state.setdefault('pipeline_metadata', {})
+        shared_state['pipeline_metadata']['content_analysis_start'] = datetime.now(timezone.utc).isoformat()
+
+        if not self.llm_client or not self.llm_client.is_available():
+            error_msg = f"LLM provider ({self.provider_name}) not available"
+            self.logger.error(error_msg)
+            return {'error': error_msg, 'captures_to_analyze': []}
+        
+        # output of Capture Ingestion node
+        raw_captures = shared_state.get('raw_captures', [])
+
+        if not raw_captures:
+            self.logger.error("No raw captures found in shared state")
+            return {'captures_to_analyze': [], 'error': 'No captures to analyze'}
+        
+        valid_captures = []
+        for i, capture in enumerate(raw_captures):
+            if isinstance(capture, dict) and 'content' in capture and capture['content'].strip():
+                valid_captures.append(capture)
+            else:
+                self.logger.warning(f"Skipping invalid capture {i}: missing or empty content")
+        
+        analysis_config = {
+            'total_captures': len(raw_captures),
+            'valid_captures': len(valid_captures),
+            'combined_content_length': sum(len(c['content']) for c in valid_captures),
+            'llm_provider': self.provider_name,
+            'model_recommendations': self.llm_client.get_model_recommendations()
+        }
+        
+        self.logger.info(f"Content analysis prep complete: {len(valid_captures)} valid captures using {self.provider_name}")
+        return {
+            'captures_to_analyze': valid_captures,
+            'analysis_config': analysis_config
+        }
 
     
     def exec(self, prep_result: Dict[str, Any]) -> Dict[str, Any]:
