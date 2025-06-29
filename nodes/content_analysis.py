@@ -133,8 +133,6 @@ class ContentAnalysisNode(BaseNode):
                 'content_analysis': {'method': 'failed', 'error': str(e)}
             }
 
-        
-
 
     def post(self, shared_state: Dict[str, Any], prep_result: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
         """
@@ -161,9 +159,6 @@ class ContentAnalysisNode(BaseNode):
         
         self.logger.info("Content analysis results stored in shared_state")
         return "default"
-        
-
-        
 
     
     def _analyze_single_capture(self, capture: Dict[str, Any], index: int) -> Dict[str, Any]:
@@ -319,7 +314,6 @@ class ContentAnalysisNode(BaseNode):
             'skills': unique_skills,
             'actionable_items': unique_actionable,
             
-            # From synthesis
             'session_theme': synthesis.get('session_learning_theme', 'mixed_topics'),
             'knowledge_progression': synthesis.get('knowledge_progression', []),
             'learning_path': synthesis.get('learning_path', []),
@@ -336,11 +330,9 @@ class ContentAnalysisNode(BaseNode):
                 'per_capture_levels': [a.get('complexity', 'intermediate') for a in individual_analyses]
             },
             
-            # For backward compatibility with other nodes
             'topics': [synthesis.get('session_learning_theme', 'general')],
             'key_concepts': unique_concepts[:10],  # Top 10 for compatibility
             
-            # Individual capture details
             'capture_analyses': individual_analyses
         }
         

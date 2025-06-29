@@ -141,6 +141,8 @@ class PipelineOrchestrator:
         bake_id = bake_data.get('bake_id', 'unknown')
         
         raw_captures = shared_state.get('raw_captures', [])
+        extracted_concepts = shared_state.get('extracted_concepts', {})
+        content_analysis = shared_state.get('content_analysis', {})
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
         
         processing_stats = self._calculate_processing_stats(shared_state, raw_captures)
@@ -170,8 +172,11 @@ class PipelineOrchestrator:
             'results': {
                 'summary': f"Successfully processed {len(raw_captures)} captures through capture ingestion",
                 'captures_processed': len(raw_captures),
+                'concepts_extracted': len(extracted_concepts.get('key_concepts', [])),
+                'topics_identified': extracted_concepts.get('topics', []),
                 'content_types_detected': processing_stats.get('content_types_detected', {}),
                 'domains_processed': processing_stats.get('domains_processed', []),
+                'complexity_level': extracted_concepts.get('complexity_assessment', {}).get('overall_level', 'unknown'),
                 'next_steps': 'Ready for historical knowledge retrieval and concept extraction'
             }
         }
@@ -184,6 +189,7 @@ class PipelineOrchestrator:
         """Calculate processing statistics from pipeline results."""
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
         capture_summary = pipeline_metadata.get('capture_ingestion_summary', {})
+        content_summary = pipeline_metadata.get('content_analysis_summary', {})
         
         stats = {
             'total_input_captures': capture_summary.get('total_input_captures', 0),
@@ -193,6 +199,15 @@ class PipelineOrchestrator:
             'domains_processed': capture_summary.get('domains_processed', []),
             'average_content_length': capture_summary.get('average_content_length', 0),
             'captures_processed': pipeline_metadata.get('captures_processed', 0)
+
+            # Content analysis stats
+            'concepts_extracted': content_summary.get('concepts_extracted', 0),
+            'entities_found': content_summary.get('entities_found', 0),
+            'topics_identified': content_summary.get('topics_identified', 0),
+            'analysis_method': content_summary.get('analysis_method', 'unknown'),
+            'overall_complexity': content_summary.get('overall_complexity', 'unknown'),
+            'session_theme': content_summary.get('session_theme', 'unknown'),
+            'llm_provider': content_summary.get('llm_provider', 'unknown')
         }
         
         # Add additional statistics from processed captures
@@ -217,6 +232,14 @@ class PipelineOrchestrator:
             stats['has_math_content'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_math', False))
             stats['has_data_tables'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_data_tables', False))
         
+        if extracted_concepts:
+            stats['learning_concepts'] = extracted_concepts.get('learning_concepts', [])
+            stats['key_terms'] = extracted_concepts.get('key_terms', {})
+            stats['methodologies'] = extracted_concepts.get('methodologies', [])
+            stats['skills'] = extracted_concepts.get('skills', [])
+            stats['session_theme'] = extracted_concepts.get('session_theme', 'mixed_topics')
+            stats['learning_goals'] = extracted_concepts.get('learning_goals', [])
+
         return stats
 
 
@@ -228,37 +251,58 @@ class PipelineOrchestrator:
             insights.append("No captures were successfully processed")
             return insights
         
-        # Content type insights
-        content_types = {}
+        if extracted_concepts:
+            learning_concepts = extracted_concepts.get('learning_concepts', [])
+            session_theme = extracted_concepts.get('session_theme', '')
+            learning_goals = extracted_concepts.get('learning_goals', [])
+            entities = extracted_concepts.get('entities', {})
+            complexity = extracted_concepts.get('complexity_assessment', {}).get('overall_level', 'basic')
+            
+            # Learning concepts insights
+            if learning_concepts:
+                insights.append(f"Identified {len(learning_concepts)} learning concepts: {', '.join(learning_concepts[:3])}")
+            
+            # Session theme insights
+            if session_theme and session_theme != 'mixed_topics':
+                insights.append(f"Learning session focused on: {session_theme.replace('_', ' ')}")
+            
+            # Learning goals insights
+            if learning_goals and len(learning_goals) > 0:
+                primary_goal = learning_goals[0] if learning_goals[0] != 'general_learning' else None
+                if primary_goal:
+                    insights.append(f"Primary learning objective: {primary_goal.replace('_', ' ')}")
+            
+            # Entity insights
+            if entities:
+                entity_types = list(set(entities.values()))
+                insights.append(f"Found entities across {len(entity_types)} categories: {', '.join(entity_types[:3])}")
+            
+            # Complexity insights
+            insights.append(f"Content complexity assessed as: {complexity}")
+            
+            # Learning pattern insights from semantic analysis
+            semantic = extracted_concepts.get('semantic_analysis', {})
+            if semantic:
+                intent = semantic.get('primary_intent', '')
+                if intent:
+                    insights.append(f"Detected learning focus: {intent.replace('_', ' ')}")
+        
         domains = set()
         knowledge_levels = {}
         
         for capture in raw_captures:
             metadata = capture.get('metadata', {})
-            
-            # Track content types
-            content_type = metadata.get('content_category', 'general')
-            content_types[content_type] = content_types.get(content_type, 0) + 1
-            
-            # Track domains
             domain = metadata.get('domain', 'unknown')
             domains.add(domain)
             
-            # Track knowledge levels
             level = metadata.get('knowledge_level', 'basic')
             knowledge_levels[level] = knowledge_levels.get(level, 0) + 1
         
+        insights.append(f"Captured content from {len(domains)} different sources")
+
         # Generate insights based on patterns
         total_captures = len(raw_captures)
-        
-        # Content type insights
-        if content_types:
-            most_common_type = max(content_types, key=content_types.get)
-            insights.append(f"Most common content type: {most_common_type} ({content_types[most_common_type]} captures)")
-        
-        # Domain diversity
-        insights.append(f"Captured content from {len(domains)} different domains")
-        
+
         # Knowledge level insights
         if knowledge_levels:
             if knowledge_levels.get('advanced', 0) > total_captures * 0.3:
@@ -277,13 +321,6 @@ class PipelineOrchestrator:
         if math_captures > 0:
             insights.append(f"Found {math_captures} captures with mathematical content")
         
-        # Learning pattern insights
-        if 'documentation' in content_types and content_types['documentation'] > total_captures * 0.4:
-            insights.append("Heavy focus on documentation and technical learning")
-        
-        if 'research_paper' in content_types:
-            insights.append("Academic research content detected")
-        
         return insights
         
 
@@ -301,7 +338,3 @@ class PipelineOrchestrator:
             pass
         
         return None
-
-
-        self.logger.info(f"Formatted pipeline results for bake {bake_id}")
-        return formatted_results

@@ -11,6 +11,7 @@ from typing import Dict, Any, List
 
 from pocketflow import Flow
 from nodes.capture_ingestion import CaptureIngestionNode
+from nodes.content_analysis import ContentAnalysisNode
 from config.pipeline_config import PipelineConfig
 
 
@@ -34,6 +35,7 @@ class NoteGenerationPipeline:
         self.logger = logging.getLogger(__name__)
 
         self.capture_ingestion_node = CaptureIngestionNode()
+        self.content_analysis_node = ContentAnalysisNode()
         
         self.flow = Flow(self.capture_ingestion_node)
 
@@ -86,9 +88,11 @@ class NoteGenerationPipeline:
             # Add completion metadata
             shared_state["pipeline_metadata"]["end_time"] = datetime.now(timezone.utc).isoformat()
             shared_state["pipeline_metadata"]["status"] = "completed"
+            shared_state["pipeline_metadata"]["nodes_executed"] = ["capture_ingestion", "content_analysis"]
             shared_state["pipeline_stage"] = "completed"
             
             self.logger.info(f"Pipeline execution completed successfully - Session ID: {session_id}")
+            self.logger.info(f"Concepts extracted: {len(shared_state.get('extracted_concepts', {}).get('key_concepts', []))}")
             return shared_state
             
         except Exception as e:
@@ -131,6 +135,9 @@ class NoteGenerationPipeline:
             # Get the specific node
             if node_name == "capture_ingestion":
                 node = self.capture_ingestion_node
+            elif node_name == "content_analysis":
+                self.capture_ingestion_node.run(shared_state)
+                node = self.content_analysis_node
             else:
                 raise ValueError(f"Node '{node_name}' not found in pipeline")
             
@@ -251,6 +258,19 @@ def main():
                     
                     if len(captures) > 3:
                         print(f"  ... and {len(captures) - 3} more")
+                    
+                if "extracted_concepts" in result:
+                concepts = result["extracted_concepts"]
+                print(f"\nCONTENT ANALYSIS RESULTS:")
+                print(f"Key Concepts: {concepts.get('key_concepts', [])}")
+                print(f"Topics: {concepts.get('topics', [])}")
+                print(f"Entities: {list(concepts.get('entities', {}).keys())}")
+                print(f"Complexity: {concepts.get('complexity_assessment', {}).get('overall_level', 'unknown')}")
+                
+                semantic = concepts.get('semantic_analysis', {})
+                if semantic:
+                    print(f"Learning Intent: {semantic.get('primary_intent', 'unknown')}")
+                    print(f"Knowledge Domains: {semantic.get('knowledge_domains', [])}")
             
             print("="*50)
     
