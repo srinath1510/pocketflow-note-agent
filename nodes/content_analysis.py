@@ -138,8 +138,32 @@ class ContentAnalysisNode(BaseNode):
 
     def post(self, shared_state: Dict[str, Any], prep_result: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
         """
-        Post-processing: Store analysis results in shared_state for Node 3.
+        Post-processing: Store analysis results in shared_state for the next node.
         """
+        self.logger.info("Starting Content Analysis post-execution phase")
+
+        shared_state['extracted_concepts'] = exec_result.get('extracted_concepts', {})
+        shared_state['content_analysis'] = exec_result.get('content_analysis', {})
+
+        concepts = exec_result.get('extracted_concepts', {})
+        processing_summary = {
+            'learning_concepts_extracted': len(concepts.get('learning_concepts', [])),
+            'entities_found': len(concepts.get('entities', {})),
+            'topics_identified': len(concepts.get('topics', [])),
+            'analysis_method': 'llm_powered',
+            'overall_complexity': concepts.get('complexity_assessment', {}).get('overall_level', 'unknown'),
+            'learning_objectives_count': len(concepts.get('learning_objectives', [])),
+            'knowledge_domains_count': len(concepts.get('knowledge_domains', []))
+        }
+
+        shared_state['pipeline_metadata']['content_analysis_summary'] = processing_summary
+        shared_state['pipeline_metadata']['content_analysis_end'] = datetime.now(timezone.utc).isoformat()
+        
+        self.logger.info("Content analysis results stored in shared_state")
+        return "default"
+        
+
+        
 
     
     def _analyze_single_capture(self, capture: Dict[str, Any], index: int) -> Dict[str, Any]:
@@ -168,7 +192,7 @@ class ContentAnalysisNode(BaseNode):
         9. "actionable_items": Concrete things a learner could do/try (array)
         10. "main_topic": The primary subject area being learned
 
-Focus on educational/learning value. Return only valid JSON."""
+        Focus on educational/learning value. Return only valid JSON."""
 
         try:
             # Use provider-agnostic client
@@ -326,23 +350,11 @@ Focus on educational/learning value. Return only valid JSON."""
             'confidence': 'high',
             'captures_analyzed': len(individual_analyses),
             'synthesis_performed': True,
-            'processing_time': datetime.now(timezone.utc).isoformat()
+            'processing_time': datetime.now(timezone.utc).isoformat(),
+            'provider': config.get('llm_provider', 'unknown')
         }
         
         return {
             'extracted_concepts': extracted_concepts,
             'content_analysis': content_analysis
-        } 'take', 'than', 'call', 'came', 'each', 'part', 'that', 'this', 'will', 'with', 'have', 'from', 'they', 'know', 'want', 'been', 'good', 'much', 'some', 'time', 'just', 'also', 'many', 'then', 'them', 'well', 'were'}
-        
-        filtered_words = [word for word in words if word not in stop_words and len(word) > 3]
-        
-        # count frequency and get top concepts
-        word_counts = Counter(filtered_words)
-        
-        # get words that appear more than once or are long/technical
-        key_concepts = []
-        for word, count in word_counts.most_common(20):
-            if count > 1 or len(word) > 6 or any(word in pattern for patterns in self.entity_patterns.values() for pattern in patterns):
-                key_concepts.append(word)
-        
-        return key_concepts[:10]  # top 10 concepts
+        }
