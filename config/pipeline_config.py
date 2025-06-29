@@ -123,13 +123,10 @@ class PipelineConfig:
             config_path: Path to configuration file
         """
         try:
-            config_file = Path(config_path)
-            if config_file.exists():
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    file_config = json.load(f)
-                
-                # Merge with existing config (file config takes precedence)
-                self._deep_merge(self.config_data, file_config)
+            with open(config_path, 'r', encoding='utf-8') as f:
+                file_config = json.load(f)
+            # Merge with existing config (file config takes precedence)
+            self._deep_merge(self.config_data, file_config)
                 
         except (json.JSONDecodeError, IOError) as e:
             print(f"Warning: Could not load config file {config_path}: {e}")
@@ -137,151 +134,184 @@ class PipelineConfig:
 
     def _load_from_environment(self):
         """Load configuration overrides from environment variables."""
-        env_mapping = {
-            "PIPELINE_LOG_LEVEL": ["logging", "log_level"],
-            "PIPELINE_LOG_FILE": ["logging", "log_file"],
-            "PIPELINE_TIMEOUT": ["pipeline", "timeout_seconds"],
-            "PIPELINE_RETRY_ATTEMPTS": ["pipeline", "retry_attempts"],
-            "CAPTURE_MAX_CONTENT_LENGTH": ["capture_ingestion", "max_content_length"],
-            "LLM_PROVIDER": ["content_analysis", "llm_provider"],
-            "LLM_MODEL": ["content_analysis", "model_name"],
-            "OUTPUT_VAULT_PATH": ["output", "vault_path"]
+        env_mappings = {
+            "SMART_NOTES_LOG_LEVEL": "log_level",
+            "SMART_NOTES_LOG_FILE": "log_file",
+            "SMART_NOTES_DATA_DIR": "data_dir",
+            "SMART_NOTES_MAX_CONCURRENT": "max_concurrent_processes",
+            "SMART_NOTES_MAX_NOTES_PER_BATCH": "max_notes_per_batch",
+            "SMART_NOTES_CONTENT_MAX_LENGTH": "content_max_length"
         }
         
-        for env_var, config_path in env_mapping.items():
-            value = os.getenv(env_var)
-            if value is not None:
-                # Try to convert to appropriate type
-                try:
-                    # Try integer conversion
-                    if value.isdigit():
+        for env_var, config_key in env_mappings.items():
+            if env_var in os.environ:
+                value = os.environ[env_var]
+                # Type conversion for numeric values
+                if config_key in ["max_concurrent_processes", "max_notes_per_batch", "content_max_length"]:
+                    try:
                         value = int(value)
-                    # Try boolean conversion
-                    elif value.lower() in ('true', 'false'):
-                        value = value.lower() == 'true'
-                except ValueError:
-                    pass  # Keep as string
+                    except ValueError:
+                        continue
                 
-                # Set the configuration value
-                self._set_nested_value(self.config_data, config_path, value)
+                self.config_data[config_key] = value
     
 
-    def _deep_merge(self, base_dict: Dict[str, Any], override_dict: Dict[str, Any]):
+    def _setup_computed_properties(self):
+        """Set up computed configuration properties."""
+        base_data_dir = Path(self.config_data["data_dir"])
+        
+        self.config_data["notes_dir"] = base_data_dir / "notes"
+        self.config_data["batches_dir"] = base_data_dir / "batches"
+        self.config_data["results_dir"] = base_data_dir / "results"
+        self.config_data["temp_dir"] = base_data_dir / "temp"
+
+        for dir_key in ["notes_dir", "batches_dir", "results_dir", "temp_dir"]:
+            dir_path = self.config_data[dir_key]
+            if isinstance(dir_path, str):
+                dir_path = Path(dir_path)
+            dir_path.mkdir(parents=True, exist_ok=True)
+
+
+    def _deep_merge(self, base_dict: Dict[str, Any], update_dict: Dict[str, Any]):
         """
         Deep merge two dictionaries.
         
         Args:
             base_dict: Base dictionary to merge into
-            override_dict: Dictionary with override values
+            update_dict: Dictionary with updates
         """
-        for key, value in override_dict.items():
+        for key, value in update_dict.items():
             if key in base_dict and isinstance(base_dict[key], dict) and isinstance(value, dict):
                 self._deep_merge(base_dict[key], value)
             else:
                 base_dict[key] = value
     
 
-    def _set_nested_value(self, config_dict: Dict[str, Any], path: list, value: Any):
-        """
-        Set a nested configuration value using a path list.
-        
-        Args:
-            config_dict: Configuration dictionary
-            path: List of keys representing the path
-            value: Value to set
-        """
-        current = config_dict
-        for key in path[:-1]:
-            if key not in current:
-                current[key] = {}
-            current = current[key]
-        current[path[-1]] = value
-    
-
     def get(self, *path, default=None):
         """
-        Get a configuration value using dot notation or path components.
+        Get a configuration value
         
         Args:
-            *path: Path components (e.g., 'logging', 'log_level' or 'logging.log_level')
-            default: Default value if path not found
+            key: Configuration key (supports dot notation like 'features.enable_batch_processing')
+            default: Default value if key not found
             
         Returns:
             Configuration value or default
         """
-        # Handle dot notation in first argument
-        if len(path) == 1 and '.' in path[0]:
-            path = path[0].split('.')
+        keys = key.split('.')
+        value = self.config_data
         
-        current = self.config_data
-        for key in path:
-            if isinstance(current, dict) and key in current:
-                current = current[key]
-            else:
-                return default
-        
-        return current
+        try:
+            for k in keys:
+                value = value[k]
+            return value
+        except (KeyError, TypeError):
+            return default
 
 
     def set(self, *path, value):
         """
-        Set a configuration value using path components.
+        Set a configuration value
         
         Args:
-            *path: Path components
+            key: Configuration key (supports dot notation)
             value: Value to set
         """
-        # Handle dot notation in first argument
-        if len(path) == 1 and '.' in path[0]:
-            path = path[0].split('.')
-        
-        self._set_nested_value(self.config_data, list(path), value)
+        keys = key.split('.')
+        config = self.config_data
     
+        for k in keys[:-1]:
+            if k not in config or not isinstance(config[k], dict):
+                config[k] = {}
+            config = config[k]
+            
+        config[keys[-1]] = value
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Return the complete configuration as a dictionary."""
-        return self.config_data.copy()
     
-
-    def save(self, file_path: str):
+    def save_to_file(self, config_path: str):
         """
-        Save current configuration to a JSON file.
+        Save current configuration to file.
         
         Args:
-            file_path: Path where to save the configuration
+            config_path: Path where to save configuration
         """
-        config_file = Path(file_path)
-        config_file.parent.mkdir(parents=True, exist_ok=True)
+        serializable_config = self._make_serializable(self.config_data.copy())
         
-        with open(config_file, 'w', encoding='utf-8') as f:
-            json.dump(self.config_data, f, indent=2)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(serializable_config, f, indent=2, default=str)
+    
+
+    def _make_serializable(self, obj: Any) -> Any:
+        if isinstance(obj, Path):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {k: self._make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_serializable(item) for item in obj]
+        else:
+            return obj
+    
     
     # properties for frequently accessed settings
     @property
     def log_level(self) -> str:
         """Get logging level."""
-        return self.get("logging", "log_level")
+        return self.config_data["log_level"]
     
     @property
     def log_file(self) -> Optional[str]:
         """Get log file path."""
-        return self.get("logging", "log_file")
+        return self.config_data["log_file"]
     
     @property
-    def pipeline_timeout(self) -> int:
-        """Get pipeline timeout in seconds."""
-        return self.get("pipeline", "timeout_seconds")
-    
-    @property
-    def max_content_length(self) -> int:
-        """Get maximum content length for capture ingestion."""
-        return self.get("capture_ingestion", "max_content_length")
-    
-    @property
-    def vault_path(self) -> str:
-        """Get output vault path."""
-        return self.get("output", "vault_path")
+    def version(self) -> str:
+        """Get version."""
+        return self.config_data["version"]
 
+    @property
+    def pipeline_name(self) -> str:
+        """Get pipeline name."""
+        return self.config_data["pipeline_name"]
+
+    @property
+    def data_dir(self) -> Path:
+        """Get data directory."""
+        return Path(self.config_data["data_dir"])
+    
+    @property
+    def notes_dir(self) -> Path:
+        """Get notes directory."""
+        return self.config_data["notes_dir"]
+    
+    @property
+    def batches_dir(self) -> Path:
+        """Get batches directory."""
+        return self.config_data["batches_dir"]
+    
+    @property
+    def results_dir(self) -> Path:
+        """Get results directory."""
+        return self.config_data["results_dir"]
+    
+    @property
+    def max_notes_per_batch(self) -> int:
+        """Get maximum notes per batch."""
+        return self.config_data["max_notes_per_batch"]
+    
+    @property
+    def content_max_length(self) -> int:
+        """Get maximum content length for capture ingestion."""
+        return self.config_data["content_max_length"]
+    
+
+    def __str__(self) -> str:
+        """String representation of configuration."""
+        return f"PipelineConfig(version={self.version}, pipeline_name={self.pipeline_name})"
+
+
+    def __repr__(self) -> str:
+        """Detailed representation of configuration."""
+        return f"PipelineConfig(config_path={self.config_path}, version={self.version})"
 
 # Example configuration file that users can customize
 EXAMPLE_CONFIG = {

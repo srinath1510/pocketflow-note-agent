@@ -179,15 +179,126 @@ class PipelineOrchestrator:
 
         def _calculate_processing_stats(self, shared_state: Dict[str, Any], raw_captures: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Calculate processing statistics from pipeline results."""
+        pipeline_metadata = shared_state.get('pipeline_metadata', {})
+        capture_summary = pipeline_metadata.get('capture_ingestion_summary', {})
+        
+        stats = {
+            'total_input_captures': capture_summary.get('total_input_captures', 0),
+            'successfully_processed': len(raw_captures),
+            'processing_success_rate': capture_summary.get('processing_success_rate', 0),
+            'content_types_detected': capture_summary.get('content_types_detected', {}),
+            'domains_processed': capture_summary.get('domains_processed', []),
+            'average_content_length': capture_summary.get('average_content_length', 0),
+            'captures_processed': pipeline_metadata.get('captures_processed', 0)
+        }
+        
+        # Add additional statistics from processed captures
+        if raw_captures:
+            knowledge_levels = {}
+            categories = {}
+            
+            for capture in raw_captures:
+                metadata = capture.get('metadata', {})
+                
+                # Count knowledge levels
+                level = metadata.get('knowledge_level', 'unknown')
+                knowledge_levels[level] = knowledge_levels.get(level, 0) + 1
+                
+                # Count categories
+                category = metadata.get('content_category', 'unknown')
+                categories[category] = categories.get(category, 0) + 1
+            
+            stats['knowledge_level_distribution'] = knowledge_levels
+            stats['category_distribution'] = categories
+            stats['has_code_samples'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_code', False))
+            stats['has_math_content'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_math', False))
+            stats['has_data_tables'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_data_tables', False))
+        
+        return stats
 
 
         def _generate_processing_insights(self, raw_captures: List[Dict[str, Any]], shared_state: Dict[str, Any]) -> List[str]:
         """Generate insights about the processed data."""
+        insights = []
+        
+        if not raw_captures:
+            insights.append("No captures were successfully processed")
+            return insights
+        
+        # Content type insights
+        content_types = {}
+        domains = set()
+        knowledge_levels = {}
+        
+        for capture in raw_captures:
+            metadata = capture.get('metadata', {})
+            
+            # Track content types
+            content_type = metadata.get('content_category', 'general')
+            content_types[content_type] = content_types.get(content_type, 0) + 1
+            
+            # Track domains
+            domain = metadata.get('domain', 'unknown')
+            domains.add(domain)
+            
+            # Track knowledge levels
+            level = metadata.get('knowledge_level', 'basic')
+            knowledge_levels[level] = knowledge_levels.get(level, 0) + 1
+        
+        # Generate insights based on patterns
+        total_captures = len(raw_captures)
+        
+        # Content type insights
+        if content_types:
+            most_common_type = max(content_types, key=content_types.get)
+            insights.append(f"Most common content type: {most_common_type} ({content_types[most_common_type]} captures)")
+        
+        # Domain diversity
+        insights.append(f"Captured content from {len(domains)} different domains")
+        
+        # Knowledge level insights
+        if knowledge_levels:
+            if knowledge_levels.get('advanced', 0) > total_captures * 0.3:
+                insights.append("High proportion of advanced-level content detected")
+            elif knowledge_levels.get('basic', 0) > total_captures * 0.7:
+                insights.append("Mostly basic-level content captured")
+            else:
+                insights.append("Balanced mix of knowledge levels detected")
+        
+        # Technical content insights
+        code_captures = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_code', False))
+        if code_captures > 0:
+            insights.append(f"Found {code_captures} captures with code samples")
+        
+        math_captures = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_math', False))
+        if math_captures > 0:
+            insights.append(f"Found {math_captures} captures with mathematical content")
+        
+        # Learning pattern insights
+        if 'documentation' in content_types and content_types['documentation'] > total_captures * 0.4:
+            insights.append("Heavy focus on documentation and technical learning")
+        
+        if 'research_paper' in content_types:
+            insights.append("Academic research content detected")
+        
+        return insights
         
 
         def _calculate_execution_time(self, pipeline_metadata: Dict[str, Any]) -> Optional[float]:
         """Calculate pipeline execution time in seconds."""
-
+        try:
+            start_time = pipeline_metadata.get('start_time')
+            end_time = pipeline_metadata.get('end_time')
+            
+            if start_time and end_time:
+                start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                return (end_dt - start_dt).total_seconds()
+        except Exception:
+            pass
         
+        return None
+
+
         self.logger.info(f"Formatted pipeline results for bake {bake_id}")
         return formatted_results
