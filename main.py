@@ -36,10 +36,14 @@ class NoteGenerationPipeline:
 
         self.capture_ingestion_node = CaptureIngestionNode()
         self.content_analysis_node = ContentAnalysisNode()
+
+        self.capture_ingestion_node >> self.content_analysis_node
         
         self.flow = Flow(self.capture_ingestion_node)
-
+        self.flow >> self.content_analysis_node
         # TODO: Add additional nodes as they are implemented
+
+        self.logger.info("Pipeline initialized with connected nodes")
 
         
     def setup_logging(self):
@@ -56,7 +60,7 @@ class NoteGenerationPipeline:
         )
         
         
-    def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    def run(self, input_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Execute the complete pipeline.
         
@@ -88,11 +92,16 @@ class NoteGenerationPipeline:
             # Add completion metadata
             shared_state["pipeline_metadata"]["end_time"] = datetime.now(timezone.utc).isoformat()
             shared_state["pipeline_metadata"]["status"] = "completed"
-            shared_state["pipeline_metadata"]["nodes_executed"] = ["capture_ingestion", "content_analysis"]
             shared_state["pipeline_stage"] = "completed"
             
             self.logger.info(f"Pipeline execution completed successfully - Session ID: {session_id}")
-            self.logger.info(f"Concepts extracted: {len(shared_state.get('extracted_concepts', {}).get('key_concepts', []))}")
+
+            raw_captures = shared_state.get('raw_captures', [])
+            extracted_concepts = shared_state.get('extracted_concepts', {})
+
+            self.logger.info(f"Processed {len(raw_captures)} captures")
+            self.logger.info(f"Extracted {len(extracted_concepts.get('key_concepts', []))} concepts")
+
             return shared_state
             
         except Exception as e:

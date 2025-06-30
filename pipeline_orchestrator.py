@@ -84,13 +84,13 @@ class PipelineOrchestrator:
         """
         self.logger.info(f"Converting {len(session_notes)} notes to pipeline format")
         
-        pipeline_notes = []
+        pipeline_captures = []
         
         for i, note in enumerate(session_notes):
             try:
                 raw_note = note.get('raw_note', {})
                 
-                pipeline_note = {
+                pipeline_capture = {
                     # Required fields for CaptureIngestionNode
                     'url': note.get('url') or raw_note.get('source', {}).get('url', ''),
                     'content': note.get('content_full') or raw_note.get('content', ''),
@@ -117,14 +117,14 @@ class PipelineOrchestrator:
                     'bake_id': bake_data.get('bake_id')
                 }
                 
-                pipeline_notes.append(pipeline_note)
+                pipeline_captures.append(pipeline_capture)
                 
             except Exception as e:
                 self.logger.warning(f"Error converting note {i}: {str(e)}. Skipping note.")
                 continue
         
-        self.logger.info(f"Successfully converted {len(pipeline_notes)} notes to pipeline format")
-        return pipeline_notes
+        self.logger.info(f"Successfully converted {len(pipeline_captures)} notes to pipeline format")
+        return pipeline_captures
         
 
     def _format_pipeline_results(self, shared_state: Dict[str, Any], bake_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -145,13 +145,13 @@ class PipelineOrchestrator:
         content_analysis = shared_state.get('content_analysis', {})
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
         
-        processing_stats = self._calculate_processing_stats(shared_state, raw_captures)
+        processing_stats = self._calculate_processing_stats(shared_state, raw_captures, extracted_concepts)
         
-        insights = self._generate_processing_insights(raw_captures, shared_state)
+        insights = self._generate_processing_insights(raw_captures, extracted_concepts, shared_state)
         
         formatted_results = {
             'bake_id': bake_id,
-            'status': 'completed',
+            'status': pipeline_metadata.get('status', 'completed'),
             'processed_at': datetime.now(timezone.utc).isoformat(),
             'input_notes_count': bake_data.get('total_notes', 0),
             
@@ -173,6 +173,7 @@ class PipelineOrchestrator:
                 'summary': f"Successfully processed {len(raw_captures)} captures through capture ingestion",
                 'captures_processed': len(raw_captures),
                 'concepts_extracted': len(extracted_concepts.get('key_concepts', [])),
+                'session_theme': extracted_concepts.get('session_theme', 'mixed_topics'),
                 'topics_identified': extracted_concepts.get('topics', []),
                 'content_types_detected': processing_stats.get('content_types_detected', {}),
                 'domains_processed': processing_stats.get('domains_processed', []),
@@ -185,7 +186,7 @@ class PipelineOrchestrator:
         return formatted_results
 
 
-    def _calculate_processing_stats(self, shared_state: Dict[str, Any], raw_captures: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _calculate_processing_stats(self, shared_state: Dict[str, Any], raw_captures: List[Dict[str, Any]], extracted_concepts: Dict[str, Any]) -> Dict[str, Any]:
         """Calculate processing statistics from pipeline results."""
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
         capture_summary = pipeline_metadata.get('capture_ingestion_summary', {})
@@ -243,7 +244,7 @@ class PipelineOrchestrator:
         return stats
 
 
-    def _generate_processing_insights(self, raw_captures: List[Dict[str, Any]], shared_state: Dict[str, Any]) -> List[str]:
+    def _generate_processing_insights(self, raw_captures: List[Dict[str, Any]], extracted_concepts: Dict[str, Any], shared_state: Dict[str, Any]) -> List[str]:
         """Generate insights about the processed data."""
         insights = []
         
