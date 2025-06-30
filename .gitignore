@@ -1,11 +1,152 @@
-echo "venv/
+# Python
+venv/
+note-agent-venv/
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment variables
 .env
+.venv
+env/
+ENV/
+
+# IDEs and editors
 .DS_Store
 .idea/
-*.egg-info/
-dist/
-build/
-*.log" > .gitignore
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Data files - IMPORTANT: Exclude all generated data
+data/
+data/**
+data/notes/
+data/batches/
+data/results/
+*.json
+!package.json
+!manifest.json
+!**/package.json
+
+# Chrome Extension specific
+.crx
+.pem
+key.pem
+
+# Flask specific
+instance/
+.webassets-cache
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Node.js (if using any npm packages)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# macOS
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+*.bak
+*.swp
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# AI/ML model files (if any)
+*.pkl
+*.pickle
+*.model
+*.h5
+
+# Large data files
+*.csv
+*.tsv
+*.parquet
+
+# Archive files
+*.zip
+*.tar.gz
+*.rar
+*.7z
