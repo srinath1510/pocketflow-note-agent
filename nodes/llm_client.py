@@ -50,7 +50,7 @@ class AnthropicProvider(LLMProvider):
         if not self.client:
             raise RuntimeError("Anthropic client not initialized")
         
-        model = kwargs.get('model', 'claude-3-sonnet-20240229')
+        model = kwargs.get('model', 'claude-3-5-haiku-latest')
         max_tokens = kwargs.get('max_tokens', 1000)
         
         # Convert messages to Anthropic format
