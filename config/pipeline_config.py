@@ -268,6 +268,12 @@ class PipelineConfig:
     def log_level(self) -> str:
         """Get logging level."""
         return self.get("log_level", default="INFO")
+
+    @log_level.setter
+    def log_level(self, value: str):
+        """Set logging level."""
+        self.set("log_level", value=value)
+    
     
     @property
     def log_file(self) -> Optional[str]:
