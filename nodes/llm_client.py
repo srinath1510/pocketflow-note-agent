@@ -133,7 +133,7 @@ class LLMClient:
     def get_model_recommendations(self) -> Dict[str, str]:
         """Get recommended models for each provider"""
         recommendations = {
-            'anthropic': 'claude-3-sonnet-20240229', 
+            'anthropic': 'claude-3-5-haiku-latest', 
         }
         return recommendations
     
@@ -142,7 +142,7 @@ class LLMClient:
         defaults = kwargs.copy()
 
         if self.provider_name == 'anthropic':
-            defaults.setdefault('model', 'claude-3-sonnet-20240229')
+            defaults.setdefault('model', 'claude-3-5-haiku-latest')
             defaults.setdefault('temperature', 0.3)
         
         return defaults
