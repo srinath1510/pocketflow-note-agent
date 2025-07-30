@@ -14,6 +14,8 @@ from nodes.capture_ingestion import CaptureIngestionNode
 from nodes.content_analysis import ContentAnalysisNode
 from config.pipeline_config import PipelineConfig
 
+from nodes.knowledge_graph import KnowledgeGraphNode
+
 
 class NoteGenerationPipeline:
     """
@@ -36,11 +38,15 @@ class NoteGenerationPipeline:
 
         self.capture_ingestion_node = CaptureIngestionNode()
         self.content_analysis_node = ContentAnalysisNode()
+        self.knowledge_graph_node = KnowledgeGraphNode()
 
-        self.capture_ingestion_node >> self.content_analysis_node
+
+        self.capture_ingestion_node >> self.content_analysis_node >> self.knowledge_graph_node
         
         self.flow = Flow(self.capture_ingestion_node)
         self.flow >> self.content_analysis_node
+        self.content_analysis_node >> self.knowledge_graph_node
+
         # TODO: Add additional nodes as they are implemented
 
         self.logger.info("Pipeline initialized with connected nodes")
