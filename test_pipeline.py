@@ -104,6 +104,406 @@ def test_capture_ingestion_single():
         return False
 
 
+def test_content_analysis():
+    """Test the Content Analysis node with LLM extraction."""
+    print("\nTesting Content Analysis Node - LLM Concept Extraction")
+    print("=" * 50)
+    
+    # Prepare test data
+    test_data = [
+        {
+            "url": "https://docs.python.org/3/library/asyncio.html",
+            "content": """<html>
+            <head><title>asyncio — Asynchronous I/O</title></head>
+            <body>
+                <h1>asyncio — Asynchronous I/O</h1>
+                <p>The asyncio module provides infrastructure for writing single-threaded concurrent code 
+                using coroutines, multiplexing I/O access over sockets and other resources.</p>
+                <h2>Key Concepts</h2>
+                <p>Event loops run asynchronous tasks and callbacks. Coroutines are special functions 
+                that can be paused and resumed. Tasks are used to schedule coroutines concurrently.</p>
+                <pre><code>import asyncio
+                
+async def main():
+    print('Hello')
+    await asyncio.sleep(1)
+    print('World')
+
+asyncio.run(main())</code></pre>
+            </body>
+            </html>""",
+            "timestamp": "2025-06-16T14:15:30Z",
+            "selected_text": "Event loops run asynchronous tasks",
+            "highlights": ["Event loops", "Coroutines", "Tasks"]
+        },
+        {
+            "url": "https://example.com/machine-learning-basics",
+            "content": """<html>
+            <head><title>Introduction to Machine Learning</title></head>
+            <body>
+                <h1>Introduction to Machine Learning</h1>
+                <p>Machine learning is a subset of artificial intelligence that enables systems 
+                to learn and improve from experience without being explicitly programmed.</p>
+                <h2>Types of Machine Learning</h2>
+                <ul>
+                    <li>Supervised Learning: Learning with labeled data</li>
+                    <li>Unsupervised Learning: Finding patterns in unlabeled data</li>
+                    <li>Reinforcement Learning: Learning through interaction and rewards</li>
+                </ul>
+                <p>Popular algorithms include neural networks, decision trees, and support vector machines.</p>
+            </body>
+            </html>""",
+            "timestamp": "2025-06-16T15:00:00Z",
+            "selected_text": "neural networks, decision trees",
+            "highlights": ["Supervised Learning", "neural networks"]
+        }
+    ]
+    
+    # Initialize pipeline
+    pipeline = NoteGenerationPipeline()
+    
+    try:
+        # First run capture ingestion
+        ingestion_result = pipeline.run_single_node("capture_ingestion", test_data)
+        
+        # Then run content analysis
+        result = pipeline.run_single_node("content_analysis", test_data)
+        
+        print(f"✅ Content analysis completed!")
+        
+        if "extracted_concepts" in result:
+            concepts = result["extracted_concepts"]
+            
+            print(f"\nExtracted Concepts:")
+            print(f"  Learning Concepts: {concepts.get('learning_concepts', [])[:5]}")
+            print(f"  Key Terms: {list(concepts.get('key_terms', {}).keys())[:5]}")
+            print(f"  Entities: {list(concepts.get('entities', {}).keys())[:5]}")
+            print(f"  Session Theme: {concepts.get('session_theme', 'unknown')}")
+            print(f"  Complexity: {concepts.get('complexity_assessment', {}).get('overall_level', 'unknown')}")
+            
+            if concepts.get('learning_goals'):
+                print(f"  Learning Goals: {concepts['learning_goals'][:3]}")
+            
+            if concepts.get('knowledge_progression'):
+                print(f"  Knowledge Progression: {concepts['knowledge_progression'][:3]}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Content analysis test failed: {str(e)}")
+        print(f"Make sure you have configured your LLM API key in .env file")
+        return False
+        
+
+def test_knowledge_graph_node():
+    """Test the Knowledge Graph node with Neo4j."""
+    print("\nTesting Knowledge Graph Node - Neo4j Integration")
+    print("=" * 50)
+    
+    # First check Neo4j connection
+    print("Checking Neo4j connection...")
+    if not test_neo4j_connection():
+        print("❌ Neo4j is not available. Please start it with: docker-compose up -d")
+        return False
+    
+    # Test data that includes extracted concepts
+    test_data = [
+        {
+            "url": "https://example.com/python-tutorial",
+            "content": """<html>
+            <head><title>Python Programming Tutorial</title></head>
+            <body>
+                <h1>Python Programming Tutorial</h1>
+                <p>Python is a high-level programming language known for its simplicity.</p>
+                <h2>Core Concepts</h2>
+                <ul>
+                    <li>Variables and Data Types</li>
+                    <li>Functions and Modules</li>
+                    <li>Object-Oriented Programming</li>
+                </ul>
+            </body>
+            </html>""",
+            "timestamp": "2025-06-16T10:00:00Z",
+            "selected_text": "Object-Oriented Programming",
+            "highlights": ["Variables and Data Types", "Functions and Modules"]
+        }
+    ]
+    
+    # Initialize pipeline
+    pipeline = NoteGenerationPipeline()
+    
+    try:
+        # Run through full pipeline up to knowledge graph
+        print("Running full pipeline through Knowledge Graph node...")
+        
+        # You can run the full pipeline which now includes all three nodes
+        result = pipeline.run(test_data)
+        
+        print(f"✅ Knowledge graph construction completed!")
+        
+        if "knowledge_graph" in result:
+            kg = result["knowledge_graph"]
+            
+            print(f"\nKnowledge Graph Results:")
+            print(f"  User ID: {kg.get('user_id', 'unknown')}")
+            print(f"  Session ID: {kg.get('session_id', 'unknown')}")
+            
+            nodes = kg.get('nodes_created', {})
+            print(f"\nNodes Created:")
+            print(f"  Concepts: {nodes.get('concepts', 0)}")
+            print(f"  Entities: {nodes.get('entities', 0)}")
+            print(f"  Topics: {nodes.get('topics', 0)}")
+            print(f"  Resources: {nodes.get('resources', 0)}")
+            
+            print(f"\nRelationships Created: {kg.get('relationships_created', 0)}")
+            
+            metrics = kg.get('metrics', {})
+            if metrics:
+                print(f"\nGraph Metrics:")
+                print(f"  Total Concepts: {metrics.get('total_concepts', 0)}")
+                print(f"  Total Entities: {metrics.get('total_entities', 0)}")
+                print(f"  Graph Density: {metrics.get('graph_density', 0):.4f}")
+                
+                if metrics.get('most_connected_concepts'):
+                    print(f"\nMost Connected Concepts:")
+                    for concept in metrics['most_connected_concepts'][:3]:
+                        print(f"    - {concept['concept']}: {concept['connections']} connections")
+            
+            insights = kg.get('insights', {})
+            if insights:
+                print(f"\nInsights:")
+                if insights.get('isolated_concepts'):
+                    print(f"  Isolated Concepts: {insights['isolated_concepts'][:3]}")
+                if insights.get('concept_clusters'):
+                    print(f"  Concept Clusters: {len(insights['concept_clusters'])}")
+                if insights.get('session_focus'):
+                    print(f"  Session Focus: {insights['session_focus'][:3]}")
+        
+        # Save results
+        save_test_results("knowledge_graph_test", result)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Knowledge graph test failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def test_full_pipeline_with_knowledge_graph():
+    """Test the complete pipeline with all three nodes."""
+    print("\nTesting Full Pipeline - All Nodes")
+    print("=" * 50)
+    
+    # Rich test data for full pipeline
+    test_data = [
+        {
+            "url": "https://pytorch.org/tutorials/beginner/basics/intro.html",
+            "content": """<html>
+            <head><title>PyTorch Fundamentals</title></head>
+            <body>
+                <h1>Introduction to PyTorch</h1>
+                <p>PyTorch is an open source machine learning framework that accelerates the path 
+                from research prototyping to production deployment.</p>
+                <h2>Core Concepts</h2>
+                <p>PyTorch provides two high-level features:</p>
+                <ul>
+                    <li>Tensor computation with strong GPU acceleration</li>
+                    <li>Deep neural networks built on automatic differentiation</li>
+                </ul>
+                <h2>Getting Started</h2>
+                <pre><code>
+import torch
+import numpy as np
+
+# Create a tensor
+x = torch.tensor([[1, 2], [3, 4]])
+print(x)
+                </code></pre>
+                <p>PyTorch tensors are similar to NumPy arrays but can be used on GPUs.</p>
+            </body>
+            </html>""",
+            "timestamp": "2025-06-16T11:00:00Z",
+            "selected_text": "Tensor computation with strong GPU acceleration",
+            "highlights": ["PyTorch", "Tensor computation", "automatic differentiation"]
+        },
+        {
+            "url": "https://example.com/deep-learning-guide",
+            "content": """<html>
+            <head><title>Deep Learning Guide</title></head>
+            <body>
+                <h1>Understanding Deep Learning</h1>
+                <p>Deep learning is a subset of machine learning that uses neural networks 
+                with multiple layers to progressively extract higher-level features from raw input.</p>
+                <h2>Key Components</h2>
+                <ul>
+                    <li>Neural Networks: Interconnected nodes inspired by the human brain</li>
+                    <li>Backpropagation: Algorithm for training neural networks</li>
+                    <li>Activation Functions: Non-linear transformations like ReLU, Sigmoid</li>
+                    <li>Loss Functions: Measure how wrong the model's predictions are</li>
+                </ul>
+                <p>Popular frameworks include TensorFlow, PyTorch, and Keras.</p>
+            </body>
+            </html>""",
+            "timestamp": "2025-06-16T11:30:00Z",
+            "selected_text": "Backpropagation: Algorithm for training neural networks",
+            "highlights": ["Neural Networks", "Backpropagation", "ReLU, Sigmoid"]
+        },
+        {
+            "url": "https://nvidia.com/cuda-programming",
+            "content": """<html>
+            <head><title>CUDA Programming Guide</title></head>
+            <body>
+                <h1>CUDA Programming for GPU Acceleration</h1>
+                <p>CUDA is NVIDIA's parallel computing platform that enables dramatic increases 
+                in computing performance by harnessing the power of the GPU.</p>
+                <h2>CUDA and Deep Learning</h2>
+                <p>Modern deep learning frameworks like PyTorch and TensorFlow use CUDA 
+                for GPU acceleration, enabling faster training of neural networks.</p>
+                <h3>Key Concepts</h3>
+                <ul>
+                    <li>CUDA Kernels: Functions that run on the GPU</li>
+                    <li>Thread Blocks: Groups of threads that execute together</li>
+                    <li>Shared Memory: Fast memory shared between threads in a block</li>
+                </ul>
+            </body>
+            </html>""",
+            "timestamp": "2025-06-16T12:00:00Z",
+            "selected_text": "CUDA Kernels: Functions that run on the GPU",
+            "highlights": ["CUDA", "GPU acceleration", "PyTorch and TensorFlow use CUDA"]
+        }
+    ]
+    
+    # Initialize pipeline
+    pipeline = NoteGenerationPipeline()
+    
+    try:
+        # Run the complete pipeline
+        result = pipeline.run(test_data)
+        
+        print(f"✅ Full pipeline execution completed!")
+        print(f"Session ID: {result['session_id']}")
+        print(f"Pipeline Stage: {result.get('pipeline_stage', 'unknown')}")
+        
+        # Display results from each node
+        print("\n📊 Pipeline Results Summary:")
+        
+        # Capture Ingestion Results
+        if "raw_captures" in result:
+            print(f"\n1️⃣ Capture Ingestion:")
+            print(f"   - Processed {len(result['raw_captures'])} captures")
+            domains = set(c['metadata']['domain'] for c in result['raw_captures'])
+            print(f"   - Domains: {list(domains)}")
+        
+        # Content Analysis Results
+        if "extracted_concepts" in result:
+            concepts = result["extracted_concepts"]
+            print(f"\n2️⃣ Content Analysis:")
+            print(f"   - Learning Concepts: {len(concepts.get('learning_concepts', []))}")
+            print(f"   - Session Theme: {concepts.get('session_theme', 'unknown')}")
+            print(f"   - Complexity: {concepts.get('complexity_assessment', {}).get('overall_level', 'unknown')}")
+            print(f"   - Top Concepts: {concepts.get('learning_concepts', [])[:3]}")
+        
+        # Knowledge Graph Results
+        if "knowledge_graph" in result:
+            kg = result["knowledge_graph"]
+            print(f"\n3️⃣ Knowledge Graph:")
+            nodes = kg.get('nodes_created', {})
+            total_nodes = sum(nodes.values())
+            print(f"   - Total Nodes: {total_nodes}")
+            print(f"   - Relationships: {kg.get('relationships_created', 0)}")
+            
+            metrics = kg.get('metrics', {})
+            if metrics:
+                print(f"   - Graph Density: {metrics.get('graph_density', 0):.4f}")
+        
+        # Save complete results
+        save_test_results("full_pipeline_test", result)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Full pipeline test failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def test_knowledge_graph_persistence():
+    """Test that the knowledge graph persists across sessions."""
+    print("\nTesting Knowledge Graph Persistence")
+    print("=" * 50)
+    
+    # First session data
+    session1_data = [{
+        "url": "https://example.com/session1",
+        "content": """<html>
+        <head><title>Introduction to Algorithms</title></head>
+        <body>
+            <h1>Introduction to Algorithms</h1>
+            <p>Algorithms are step-by-step procedures for solving problems.</p>
+            <p>Common algorithms include sorting, searching, and graph traversal.</p>
+        </body>
+        </html>""",
+        "timestamp": "2025-06-16T09:00:00Z",
+        "selected_text": "sorting, searching, and graph traversal",
+        "highlights": ["Algorithms", "sorting", "searching"]
+    }]
+    
+    # Second session data (related concepts)
+    session2_data = [{
+        "url": "https://example.com/session2",
+        "content": """<html>
+        <head><title>Advanced Sorting Algorithms</title></head>
+        <body>
+            <h1>Advanced Sorting Algorithms</h1>
+            <p>Building on basic algorithms, we explore quicksort and mergesort.</p>
+            <p>These sorting algorithms are more efficient for large datasets.</p>
+        </body>
+        </html>""",
+        "timestamp": "2025-06-16T10:00:00Z",
+        "selected_text": "quicksort and mergesort",
+        "highlights": ["sorting algorithms", "quicksort", "mergesort"]
+    }]
+    
+    pipeline = NoteGenerationPipeline()
+    
+    try:
+        # Run first session
+        print("Running first learning session...")
+        result1 = pipeline.run(session1_data)
+        
+        if "knowledge_graph" in result1:
+            kg1 = result1["knowledge_graph"]
+            print(f"Session 1 - Concepts added: {kg1['nodes_created']['concepts']}")
+        
+        # Run second session
+        print("\nRunning second learning session...")
+        result2 = pipeline.run(session2_data)
+        
+        if "knowledge_graph" in result2:
+            kg2 = result2["knowledge_graph"]
+            metrics2 = kg2.get('metrics', {})
+            
+            print(f"\nSession 2 Results:")
+            print(f"  New concepts added: {kg2['nodes_created']['concepts']}")
+            print(f"  Total concepts in graph: {metrics2.get('total_concepts', 0)}")
+            print(f"  Total relationships: {metrics2.get('total_edges', 0)}")
+            
+            # Check if concepts are connected
+            insights = kg2.get('insights', {})
+            if insights.get('concept_clusters'):
+                print(f"\nConcept Clusters Found:")
+                for cluster in insights['concept_clusters'][:2]:
+                    print(f"  Hub: {cluster['hub']}")
+                    print(f"  Related: {', '.join(cluster['related'][:3])}")
+        
+        print("\n✅ Knowledge graph persistence test completed!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Persistence test failed: {str(e)}")
+        return False
+
 def test_capture_ingestion_batch():
     """Test the Capture Ingestion node with multiple captures."""
     print("\nTesting Capture Ingestion Node - Batch Processing")
@@ -211,7 +611,6 @@ asyncio.run(main())</code></pre>
         print(f"❌ Batch test failed: {str(e)}")
         return False
 
-
 def test_invalid_data():
     """Test the Capture Ingestion node with invalid data."""
     print("\nTesting Capture Ingestion Node - Invalid Data Handling")
@@ -273,75 +672,6 @@ def test_invalid_data():
         print(f"❌ Invalid data test failed: {str(e)}")
         return False
 
-
-def test_full_pipeline_preview():
-    """Test the full pipeline (currently only has capture ingestion)."""
-    print("\nTesting Full Pipeline (Current Implementation)")
-    print("=" * 50)
-    
-    # Simple test data
-    test_data = {
-        "url": "https://example.com/test-article",
-        "content": """<html>
-        <head><title>Test Article</title></head>
-        <body>
-            <h1>Test Article</h1>
-            <p>This is a test article for the pipeline.</p>
-            <h2>Features</h2>
-            <ul>
-                <li>Simple content</li>
-                <li>Basic structure</li>
-            </ul>
-        </body>
-        </html>""",
-        "timestamp": "2025-06-16T12:00:00Z",
-        "selected_text": "test article",
-        "highlights": ["test article"],
-        "dwell_time": 30000,
-        "scroll_depth": 0.5,
-        "trigger": "test",
-        "intent": "testing"
-    }
-    
-    # Initialize pipeline
-    pipeline = NoteGenerationPipeline()
-    
-    try:
-        # Run the full pipeline (currently only capture ingestion)
-        result = pipeline.run(test_data)
-        
-        print(f"✅ Full pipeline completed!")
-        print(f"Session ID: {result['session_id']}")
-        print(f"Pipeline Stage: {result.get('pipeline_stage', 'unknown')}")
-        
-        # Display pipeline metadata
-        if "pipeline_metadata" in result:
-            metadata = result["pipeline_metadata"]
-            print(f"\nPipeline Metadata:")
-            print(f"  Status: {metadata.get('status', 'unknown')}")
-            print(f"  Start Time: {metadata.get('start_time', 'unknown')}")
-            print(f"  End Time: {metadata.get('end_time', 'unknown')}")
-            print(f"  Config Version: {metadata.get('config_version', 'unknown')}")
-            print(f"  Pipeline Version: {metadata.get('pipeline_version', 'unknown')}")
-        
-        # Display captured data
-        if "raw_captures" in result:
-            captures = result["raw_captures"]
-            print(f"\nCaptured Data:")
-            print(f"  Processed Captures: {len(captures)}")
-            
-            for capture in captures:
-                print(f"  📄 {capture['metadata']['page_title']}")
-                print(f"     Category: {capture['metadata']['content_category']}")
-                print(f"     Words: {capture['metadata']['word_count']}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Full pipeline test failed: {str(e)}")
-        return False
-
-
 def save_test_results(test_name: str, result_data: dict):
     """Save test results to a JSON file for inspection."""
     output_dir = Path("test_outputs")
@@ -359,12 +689,20 @@ def main():
     """Run all tests."""
     print("🚀 Starting AI Note Generation Pipeline Tests")
     print("=" * 60)
+
+    print("Environment Check:")
+    print(f"  LLM Provider: {os.getenv('LLM_PROVIDER', 'not set')}")
+    print(f"  Neo4j URI: {os.getenv('NEO4J_URI', 'not set')}")
     
     tests = [
+        ("Neo4j Connection", lambda: test_neo4j_connection()),
         ("Single Capture", test_capture_ingestion_single),
         ("Batch Processing", test_capture_ingestion_batch),
         ("Invalid Data Handling", test_invalid_data),
-        ("Full Pipeline Preview", test_full_pipeline_preview)
+        ("Content Analysis (LLM)", test_content_analysis),
+        ("Knowledge Graph Node", test_knowledge_graph_node),
+        ("Full Pipeline", test_full_pipeline_with_knowledge_graph),
+        ("Knowledge Graph Persistence", test_knowledge_graph_persistence)
     ]
     
     results = {}
@@ -393,9 +731,23 @@ def main():
     print(f"\nOverall: {passed}/{total} tests passed")
     
     if passed == total:
-        print("🎉 All tests passed! The Capture Ingestion node is working correctly.")
+        print("🎉 All tests passed! The pipeline is working correctly.")
     else:
         print("⚠️  Some tests failed. Check the output above for details.")
+
+        print("\n📋 Troubleshooting Tips:")
+       
+       if results.get("Neo4j Connection") != "PASSED":
+           print("  - Neo4j: Make sure Neo4j is running with 'docker-compose up -d'")
+           print("           Check logs with 'docker-compose logs neo4j'")
+       
+       if results.get("Content Analysis (LLM)") != "PASSED":
+           print("  - LLM: Ensure your ANTHROPIC_API_KEY is set in .env file")
+           print("         Check with: echo $ANTHROPIC_API_KEY")
+       
+       if results.get("Knowledge Graph Node") != "PASSED":
+           print("  - KG: Verify Neo4j is accessible at http://localhost:7474")
+           print("        Login: neo4j / smartnotes123")
 
 
 if __name__ == "__main__":
