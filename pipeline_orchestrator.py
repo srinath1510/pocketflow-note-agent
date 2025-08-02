@@ -178,8 +178,37 @@ class PipelineOrchestrator:
                 'content_types_detected': processing_stats.get('content_types_detected', {}),
                 'domains_processed': processing_stats.get('domains_processed', []),
                 'complexity_level': extracted_concepts.get('complexity_assessment', {}).get('overall_level', 'unknown'),
-                'next_steps': 'Ready for historical knowledge retrieval and concept extraction'
+
+                'knowledge_graph_nodes': knowledge_graph.get('nodes_created', {}),
+                'knowledge_graph_relationships': knowledge_graph.get('relationships_created', 0),
+                'graph_density': knowledge_graph.get('metrics', {}).get('graph_density', 0),
+
+                'historical_analysis': {
+                    'connections_found': historical_connections.get('total_connections_found', 0),
+                    'knowledge_gaps_identified': len(knowledge_gaps),
+                    'reinforcement_opportunities': len(reinforcement_opportunities),
+                    'learning_recommendations': len(learning_recommendations),
+                    'learning_patterns_analyzed': bool(learning_patterns)
+                },
+                
+                'next_steps': self._generate_next_steps(learning_recommendations, knowledge_gaps)
+            },
+
+            'detailed_results': {
+                'content_analysis': {
+                    'extracted_concepts': extracted_concepts,
+                    'analysis_metadata': content_analysis
+                },
+                'knowledge_graph': knowledge_graph,
+                'historical_analysis': {
+                    'connections': historical_connections,
+                    'knowledge_gaps': knowledge_gaps,
+                    'reinforcement_opportunities': reinforcement_opportunities,
+                    'learning_patterns': learning_patterns,
+                    'recommendations': learning_recommendations
+                }
             }
+            
         }
 
         self.logger.info(f"Formatted pipeline results for bake {bake_id}")
@@ -191,6 +220,9 @@ class PipelineOrchestrator:
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
         capture_summary = pipeline_metadata.get('capture_ingestion_summary', {})
         content_summary = pipeline_metadata.get('content_analysis_summary', {})
+        kg_summary = pipeline_metadata.get('knowledge_graph_summary', {})
+        historical_summary = pipeline_metadata.get('historical_analysis_summary', {})
+        
         
         stats = {
             'total_input_captures': capture_summary.get('total_input_captures', 0),
@@ -199,7 +231,6 @@ class PipelineOrchestrator:
             'content_types_detected': capture_summary.get('content_types_detected', {}),
             'domains_processed': capture_summary.get('domains_processed', []),
             'average_content_length': capture_summary.get('average_content_length', 0),
-            'captures_processed': pipeline_metadata.get('captures_processed', 0),
 
             # Content analysis stats
             'concepts_extracted': content_summary.get('concepts_extracted', 0),
@@ -208,7 +239,18 @@ class PipelineOrchestrator:
             'analysis_method': content_summary.get('analysis_method', 'unknown'),
             'overall_complexity': content_summary.get('overall_complexity', 'unknown'),
             'session_theme': content_summary.get('session_theme', 'unknown'),
-            'llm_provider': content_summary.get('llm_provider', 'unknown')
+            'llm_provider': content_summary.get('llm_provider', 'unknown'),
+
+            # Knowledge graph stats
+            'knowledge_graph_nodes_created': kg_summary.get('total_nodes_created', 0),
+            'knowledge_graph_relationships': kg_summary.get('total_relationships', 0),
+            'graph_density': kg_summary.get('graph_density', 0),
+
+            # Historical analysis stats - NEW!
+            'historical_connections_found': historical_summary.get('connections_found', 0),
+            'knowledge_gaps_identified': historical_summary.get('knowledge_gaps_identified', 0),
+            'reinforcement_opportunities_found': historical_summary.get('reinforcement_opportunities', 0),
+            'learning_patterns_detected': historical_summary.get('learning_patterns_detected', 0)
         }
         
         # Add additional statistics from processed captures
@@ -281,12 +323,64 @@ class PipelineOrchestrator:
             # Complexity insights
             insights.append(f"Content complexity assessed as: {complexity}")
             
-            # Learning pattern insights from semantic analysis
-            semantic = extracted_concepts.get('semantic_analysis', {})
-            if semantic:
-                intent = semantic.get('primary_intent', '')
-                if intent:
-                    insights.append(f"Detected learning focus: {intent.replace('_', ' ')}")
+        # Knowledge graph insights
+        knowledge_graph = shared_state.get('knowledge_graph', {})
+        if knowledge_graph:
+            nodes_created = knowledge_graph.get('nodes_created', {})
+            total_nodes = sum(nodes_created.values())
+            relationships = knowledge_graph.get('relationships_created', 0)
+            
+            insights.append(f"Created knowledge graph with {total_nodes} nodes and {relationships} relationships")
+            
+            # Graph structure insights
+            metrics = knowledge_graph.get('metrics', {})
+            density = metrics.get('graph_density', 0)
+            if density > 0.5:
+                insights.append("High knowledge connectivity detected - concepts are well-integrated")
+            elif density > 0.2:
+                insights.append("Moderate knowledge connectivity - some concept clusters identified")
+            else:
+                insights.append("Low knowledge connectivity - concepts may need more integration")
+        
+        # Historical analysis insights - NEW!
+        historical_connections = shared_state.get('historical_connections', {})
+        knowledge_gaps = shared_state.get('knowledge_gaps', [])
+        reinforcement_opportunities = shared_state.get('reinforcement_opportunities', [])
+        learning_recommendations = shared_state.get('learning_recommendations', [])
+        
+        if historical_connections:
+            total_connections = historical_connections.get('total_connections_found', 0)
+            if total_connections > 0:
+                insights.append(f"Connected new learning to {total_connections} existing concepts in your knowledge base")
+            else:
+                insights.append("No connections to existing knowledge found - this appears to be a new learning domain")
+        
+        # Knowledge gaps insights
+        if knowledge_gaps:
+            high_priority_gaps = [gap for gap in knowledge_gaps if gap.get('priority') == 'high']
+            if high_priority_gaps:
+                gap_concepts = [gap.get('missing_concept', 'unknown') for gap in high_priority_gaps[:2]]
+                insights.append(f"Critical knowledge gaps identified: {', '.join(gap_concepts)}")
+            elif len(knowledge_gaps) > 0:
+                insights.append(f"Identified {len(knowledge_gaps)} areas for foundational learning")
+        
+        # Reinforcement insights
+        if reinforcement_opportunities:
+            urgent_reinforcement = [opp for opp in reinforcement_opportunities if opp.get('priority') == 'high']
+            if urgent_reinforcement:
+                concepts_to_review = [opp.get('concept', 'unknown') for opp in urgent_reinforcement[:2]]
+                insights.append(f"Urgent review recommended for: {', '.join(concepts_to_review)}")
+            elif len(reinforcement_opportunities) > 0:
+                insights.append(f"Found {len(reinforcement_opportunities)} concepts that could benefit from review")
+        
+        # Learning recommendations insights
+        if learning_recommendations:
+            high_priority_recs = [rec for rec in learning_recommendations if rec.get('priority') == 'high']
+            if high_priority_recs:
+                insights.append(f"Generated {len(high_priority_recs)} high-priority learning recommendations")
+            else:
+                insights.append(f"Generated {len(learning_recommendations)} learning recommendations")
+        
         
         domains = set()
         knowledge_levels = {}
@@ -323,6 +417,32 @@ class PipelineOrchestrator:
             insights.append(f"Found {math_captures} captures with mathematical content")
         
         return insights
+
+
+    def _generate_next_steps(self, recommendations: List[Dict[str, Any]], knowledge_gaps: List[Dict[str, Any]]) -> List[str]:
+        """Generate actionable next steps based on analysis results."""
+        next_steps = []
+        
+        # Priority 1: Address high-priority recommendations
+        high_priority_recs = [rec for rec in recommendations if rec.get('priority') == 'high']
+        for rec in high_priority_recs[:2]:  # Top 2
+            next_steps.append(rec.get('action', 'Review recommendations'))
+        
+        # Priority 2: Address critical knowledge gaps
+        critical_gaps = [gap for gap in knowledge_gaps if gap.get('priority') == 'high']
+        for gap in critical_gaps[:2]:  # Top 2
+            next_steps.append(gap.get('recommended_action', f"Study {gap.get('missing_concept', 'identified gaps')}"))
+        
+        # Priority 3: Continue learning path
+        if not next_steps:
+            next_steps.append("Continue exploring the concepts from this session")
+            next_steps.append("Review and organize your captured notes")
+        
+        # Always include note generation as final step
+        next_steps.append("Generate structured notes from this analysis")
+        
+        return next_steps[:5]  # Limit to 5 next steps
+        
         
 
     def _calculate_execution_time(self, pipeline_metadata: Dict[str, Any]) -> Optional[float]:

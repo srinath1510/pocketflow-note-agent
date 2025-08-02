@@ -12,6 +12,7 @@ from typing import Dict, Any, List
 from pocketflow import Flow
 from nodes.capture_ingestion import CaptureIngestionNode
 from nodes.content_analysis import ContentAnalysisNode
+from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
 from config.pipeline_config import PipelineConfig
 
 from nodes.knowledge_graph import KnowledgeGraphNode
@@ -39,6 +40,7 @@ class NoteGenerationPipeline:
         self.capture_ingestion_node = CaptureIngestionNode()
         self.content_analysis_node = ContentAnalysisNode()
         self.knowledge_graph_node = KnowledgeGraphNode()
+        self.historical_knowledge_node = HistoricalKnowledgeRetrievalNode()
 
 
         self.capture_ingestion_node >> self.content_analysis_node >> self.knowledge_graph_node
@@ -46,6 +48,7 @@ class NoteGenerationPipeline:
         self.flow = Flow(self.capture_ingestion_node)
         self.flow >> self.content_analysis_node
         self.content_analysis_node >> self.knowledge_graph_node
+        self.knowledge_graph_node >> self.historical_knowledge_node
 
         # TODO: Add additional nodes as they are implemented
 
@@ -87,7 +90,7 @@ class NoteGenerationPipeline:
             "pipeline_metadata": {
                 "start_time": datetime.now(timezone.utc).isoformat(),
                 "config_version": self.config.version,
-                "pipeline_version": "1.0.0"
+                "pipeline_version": "1.1.0"
             }
         }
         
@@ -104,9 +107,15 @@ class NoteGenerationPipeline:
 
             raw_captures = shared_state.get('raw_captures', [])
             extracted_concepts = shared_state.get('extracted_concepts', {})
+            knowledge_graph = shared_state.get('knowledge_graph', {})
+            historical_connections = shared_state.get('historical_connections', {})
+
 
             self.logger.info(f"Processed {len(raw_captures)} captures")
             self.logger.info(f"Extracted {len(extracted_concepts.get('key_concepts', []))} concepts")
+            self.logger.info(f"Created {knowledge_graph.get('nodes_created', {}).get('concepts', 0)} knowledge graph nodes")
+            self.logger.info(f"Found {historical_connections.get('total_connections_found', 0)} historical connections")
+
 
             return shared_state
             
@@ -153,6 +162,16 @@ class NoteGenerationPipeline:
             elif node_name == "content_analysis":
                 self.capture_ingestion_node.run(shared_state)
                 node = self.content_analysis_node
+            elif node_name == "knowledge_graph":
+                self.capture_ingestion_node.run(shared_state)
+                self.content_analysis_node.run(shared_state)
+                node = self.knowledge_graph_node
+            elif node_name == "historical_knowledge":
+                # Run all prerequisite nodes
+                self.capture_ingestion_node.run(shared_state)
+                self.content_analysis_node.run(shared_state)
+                self.knowledge_graph_node.run(shared_state)
+                node = self.historical_knowledge_node
             else:
                 raise ValueError(f"Node '{node_name}' not found in pipeline")
             
@@ -259,35 +278,76 @@ def main():
             print(f"Start Time: {metadata.get('start_time', 'Unknown')}")
             print(f"End Time: {metadata.get('end_time', 'Unknown')}")
             
+            # Capture ingestion results
             if "raw_captures" in result:
                 captures = result["raw_captures"]
-                print(f"Processed Captures: {len(captures)}")
+                print(f"\n📥 CAPTURE INGESTION:")
+                print(f"   Processed Captures: {len(captures)}")
                 
                 if captures:
-                    print("\nCapture Details:")
-                    for i, capture in enumerate(captures[:3]):  # Show first 3
-                        print(f"  {i+1}. {capture['metadata']['page_title'][:50]}...")
-                        print(f"     URL: {capture['url']}")
-                        print(f"     Content Length: {len(capture['content'])} chars")
-                        print(f"     Category: {capture['metadata']['content_category']}")
-                    
-                    if len(captures) > 3:
-                        print(f"  ... and {len(captures) - 3} more")
-                    
-                if "extracted_concepts" in result:
-                    concepts = result["extracted_concepts"]
-                    print(f"\nCONTENT ANALYSIS RESULTS:")
-                    print(f"Key Concepts: {concepts.get('key_concepts', [])}")
-                    print(f"Topics: {concepts.get('topics', [])}")
-                    print(f"Entities: {list(concepts.get('entities', {}).keys())}")
-                    print(f"Complexity: {concepts.get('complexity_assessment', {}).get('overall_level', 'unknown')}")
-                    
-                    semantic = concepts.get('semantic_analysis', {})
-                    if semantic:
-                        print(f"Learning Intent: {semantic.get('primary_intent', 'unknown')}")
-                        print(f"Knowledge Domains: {semantic.get('knowledge_domains', [])}")
+                    print(f"   Sample Captures:")
+                    for i, capture in enumerate(captures[:2]):  # Show first 2
+                        print(f"     {i+1}. {capture['metadata']['page_title'][:40]}...")
+                        print(f"        URL: {capture['url']}")
+                        print(f"        Category: {capture['metadata']['content_category']}")
             
-            print("="*50)
+            # Content analysis results
+            if "extracted_concepts" in result:
+                concepts = result["extracted_concepts"]
+                print(f"\n🧠 CONTENT ANALYSIS:")
+                print(f"   Learning Concepts: {len(concepts.get('learning_concepts', []))}")
+                print(f"   Key Terms: {len(concepts.get('key_terms', {}))}")
+                print(f"   Entities: {len(concepts.get('entities', {}))}")
+                print(f"   Session Theme: {concepts.get('session_theme', 'unknown')}")
+                
+                if concepts.get('learning_concepts'):
+                    print(f"   Top Concepts: {', '.join(concepts['learning_concepts'][:3])}")
+            
+            # Knowledge graph results
+            if "knowledge_graph" in result:
+                kg = result["knowledge_graph"]
+                print(f"\n🕸️ KNOWLEDGE GRAPH:")
+                nodes_created = kg.get('nodes_created', {})
+                print(f"   Concepts: {nodes_created.get('concepts', 0)} nodes")
+                print(f"   Entities: {nodes_created.get('entities', 0)} nodes") 
+                print(f"   Topics: {nodes_created.get('topics', 0)} nodes")
+                print(f"   Resources: {nodes_created.get('resources', 0)} nodes")
+                print(f"   Relationships: {kg.get('relationships_created', 0)}")
+                
+                metrics = kg.get('metrics', {})
+                print(f"   Graph Density: {metrics.get('graph_density', 0):.3f}")
+            
+            # Historical knowledge results - NEW!
+            if "historical_connections" in result:
+                hist = result.get('historical_connections', {})
+                gaps = result.get('knowledge_gaps', [])
+                reinforcement = result.get('reinforcement_opportunities', [])
+                recommendations = result.get('learning_recommendations', [])
+                
+                print(f"\n🔗 HISTORICAL KNOWLEDGE ANALYSIS:")
+                print(f"   Total Connections Found: {hist.get('total_connections_found', 0)}")
+                print(f"   Knowledge Gaps Identified: {len(gaps)}")
+                print(f"   Reinforcement Opportunities: {len(reinforcement)}")
+                print(f"   Learning Recommendations: {len(recommendations)}")
+                
+                # Show high-priority recommendations
+                high_priority = [r for r in recommendations if r.get('priority') == 'high']
+                if high_priority:
+                    print(f"\n   🚨 High Priority Recommendations:")
+                    for rec in high_priority[:2]:
+                        print(f"     • {rec.get('action', 'No action')}")
+                        print(f"       Reason: {rec.get('reason', 'No reason')}")
+                
+                # Show knowledge gaps
+                if gaps:
+                    print(f"\n   📚 Knowledge Gaps to Address:")
+                    for gap in gaps[:2]:
+                        print(f"     • Missing: {gap.get('missing_concept', 'Unknown')}")
+                        print(f"       Priority: {gap.get('priority', 'medium')}")
+            
+            print("\n" + "="*60)
+            print("Pipeline execution complete! 🎉")
+            print("Your learning session has been analyzed and connected to your existing knowledge.")
     
     except Exception as e:
         print(f"Pipeline execution failed: {str(e)}")
