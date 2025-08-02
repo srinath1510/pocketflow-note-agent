@@ -67,6 +67,7 @@ class NotionNoteGenerationNode(BaseNode):
             'new': '🆕'
         }
 
+
     def _init_database_schemas(self) -> Dict[str, Any]:
         """Initialize database schema templates for different content types"""
         return {
@@ -114,8 +115,6 @@ class NotionNoteGenerationNode(BaseNode):
                             ]
                         }
                     },
-                    'Learning Sessions': {'relation': {'database_id': ''}},
-                    'Connected Concepts': {'relation': {'database_id': ''}},
                     'First Learned': {'date': {}},
                     'Last Reviewed': {'date': {}},
                     'Mastery Level': {'number': {}},
@@ -152,11 +151,58 @@ class NotionNoteGenerationNode(BaseNode):
                     'Captured Date': {'date': {}},
                     'Word Count': {'number': {}},
                     'Has Code': {'checkbox': {}},
-                    'Has Math': {'checkbox': {}},
-                    'Learning Sessions': {'relation': {'database_id': ''}}
+                    'Has Math': {'checkbox': {}}
                 }
             }
         }
+
+
+    def _add_database_relations(self, databases: Dict[str, str]):
+        """Add relation properties to databases after they're all created"""
+        try:
+            # Add Learning Sessions relation to Concepts database
+            requests.patch(
+                f"{self.notion_api_url}/databases/{databases['concepts']}",
+                headers=self.headers,
+                json={
+                    "properties": {
+                        "Learning Sessions": {
+                            "relation": {
+                                "database_id": databases['learning_sessions'],
+                                "single_property": {}
+                            }
+                        },
+                        "Connected Concepts": {
+                            "relation": {
+                                "database_id": databases['concepts'],
+                                "dual_property": {}
+                            }
+                        }
+                    }
+                }
+            )
+            
+            # Add Learning Sessions relation to Sources database
+            requests.patch(
+                f"{self.notion_api_url}/databases/{databases['sources']}",
+                headers=self.headers,
+                json={
+                    "properties": {
+                        "Learning Sessions": {
+                            "relation": {
+                                "database_id": databases['learning_sessions'],
+                                "single_property": {}
+                            }
+                        }
+                    }
+                }
+            )
+            
+            self.logger.info("Successfully added database relations")
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to add database relations: {str(e)}")
+
 
     def prep(self, shared_state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -203,6 +249,7 @@ class NotionNoteGenerationNode(BaseNode):
         
         self.logger.info(f"Prepared Notion generation for session: {prep_data['session_data']['session_id']}")
         return prep_data
+
 
     def exec(self, prep_result: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -267,6 +314,7 @@ class NotionNoteGenerationNode(BaseNode):
             self.logger.error(f"Notion generation failed: {str(e)}")
             return {'error': f"Notion generation failed: {str(e)}"}
 
+
     def post(self, shared_state: Dict[str, Any], prep_result: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
         """
         Post-processing: Store Notion results and URLs
@@ -297,6 +345,7 @@ class NotionNoteGenerationNode(BaseNode):
         self.logger.info(f"Notion generation complete - Session page: {exec_result['notion_urls']['session']}")
         return "default"
 
+
     def _test_notion_connection(self):
         """Test Notion API connection"""
         response = requests.get(
@@ -304,6 +353,7 @@ class NotionNoteGenerationNode(BaseNode):
             headers=self.headers
         )
         response.raise_for_status()
+
 
     def _ensure_databases_exist(self, needed_databases: List[str]) -> Dict[str, str]:
         """Ensure required Notion databases exist, create if needed"""
@@ -315,10 +365,9 @@ class NotionNoteGenerationNode(BaseNode):
                 databases[db_type] = db_id
                 self.logger.info(f"Database '{db_type}' ready: {db_id}")
         
-        # Update relation database IDs in schemas
-        self._update_relation_ids(databases)
-        
+        self._add_database_relations(databases)
         return databases
+
 
     def _get_or_create_database(self, db_type: str) -> str:
         """Get existing database or create new one"""
@@ -333,6 +382,7 @@ class NotionNoteGenerationNode(BaseNode):
         
         # Create new database
         return self._create_database(db_type)
+
 
     def _search_database_by_title(self, title: str) -> Optional[str]:
         """Search for existing database by title"""
@@ -357,6 +407,7 @@ class NotionNoteGenerationNode(BaseNode):
         
         return None
 
+
     def _create_database(self, db_type: str) -> str:
         """Create new Notion database"""
         schema = self.database_schemas[db_type]
@@ -374,17 +425,24 @@ class NotionNoteGenerationNode(BaseNode):
             "title": [{"type": "text", "text": {"content": schema['title']}}],
             "properties": schema['properties']
         }
-        
+
+        self.logger.info(f"Creating database '{db_type}' with schema: {json.dumps(database_data, indent=2)}")
+
         response = requests.post(
             f"{self.notion_api_url}/databases",
             headers=self.headers,
             json=database_data
         )
-        response.raise_for_status()
+        if not response.ok:
+            self.logger.error(f"Database creation failed for '{db_type}':")
+            self.logger.error(f"Status: {response.status_code}")
+            self.logger.error(f"Response: {response.text}")
+            raise Exception(f"Database creation failed: {response.status_code} - {response.text}")
         
         database_id = response.json()['id']
         self.logger.info(f"Created database '{db_type}': {database_id}")
         return database_id
+
 
     def _get_root_page_id(self) -> str:
         """Get a suitable root page ID for database creation"""
@@ -406,6 +464,7 @@ class NotionNoteGenerationNode(BaseNode):
         
         # Fallback: create a dedicated parent page
         return self._create_parent_page()
+
 
     def _create_parent_page(self) -> str:
         """Create a dedicated parent page for Smart Notes"""
@@ -440,12 +499,14 @@ class NotionNoteGenerationNode(BaseNode):
         response.raise_for_status()
         return response.json()['id']
 
+
     def _update_relation_ids(self, databases: Dict[str, str]):
         """Update relation database IDs in schemas"""
         if 'learning_sessions' in databases and 'concepts' in databases:
             self.database_schemas['concepts']['properties']['Learning Sessions']['relation']['database_id'] = databases['learning_sessions']
             self.database_schemas['sources']['properties']['Learning Sessions']['relation']['database_id'] = databases['learning_sessions']
             self.database_schemas['concepts']['properties']['Connected Concepts']['relation']['database_id'] = databases['concepts']
+
 
     def _create_concept_pages(self, extracted_concepts: Dict[str, Any], concepts_db_id: str) -> Dict[str, Any]:
         """Create or update concept pages in Notion"""
@@ -494,6 +555,7 @@ class NotionNoteGenerationNode(BaseNode):
         
         return concept_pages
 
+
     def _find_existing_concept_page(self, concept: str, database_id: str) -> Optional[str]:
         """Find existing concept page in database"""
         try:
@@ -517,6 +579,7 @@ class NotionNoteGenerationNode(BaseNode):
             self.logger.warning(f"Error searching for concept '{concept}': {str(e)}")
         
         return None
+
 
     def _create_source_pages(self, raw_captures: List[Dict[str, Any]], sources_db_id: str) -> Dict[str, Any]:
         """Create source pages in Notion"""
@@ -555,6 +618,7 @@ class NotionNoteGenerationNode(BaseNode):
                 self.logger.warning(f"Failed to create source page: {str(e)}")
         
         return source_pages
+
 
     def _create_session_page(self, session_data: Dict[str, Any], content_data: Dict[str, Any], 
                            sessions_db_id: str, concept_pages: Dict, source_pages: Dict) -> Dict[str, Any]:
@@ -605,6 +669,7 @@ class NotionNoteGenerationNode(BaseNode):
         except Exception as e:
             self.logger.error(f"Failed to create session page: {str(e)}")
             return {}
+
 
     def _add_session_content(self, page_id: str, content_data: Dict[str, Any], 
                            concept_pages: Dict, source_pages: Dict):
@@ -747,6 +812,7 @@ class NotionNoteGenerationNode(BaseNode):
             
         except Exception as e:
             self.logger.warning(f"Failed to add content to session page: {str(e)}")
+
 
     def _update_concept_relationships(self, concept_pages: Dict, historical_connections: Dict, concepts_db_id: str):
         """Update concept relationships based on historical connections"""
