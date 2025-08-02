@@ -1,0 +1,21 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: smart_notes_neo4j
+    ports:
+      - "7474:7474"  # Neo4j Browser
+      - "7687:7687"  # Bolt connector
+    environment:
+      - NEO4J_AUTH=neo4j/smartnotes123
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+      - ./data/neo4j/import:/var/lib/neo4j/import
+      - ./data/neo4j/plugins:/plugins
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
