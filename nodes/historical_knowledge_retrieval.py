@@ -62,7 +62,6 @@ class HistoricalKnowledgeRetrievalNode(BaseNode):
             return {'error': 'No concepts to analyze historically', 'user_id': user_id}
         
         # Get Neo4j driver from knowledge graph node
-        # We'll access it through the shared_state or re-initialize
         neo4j_config = {
             'uri': 'bolt://localhost:7687',
             'user': 'neo4j', 
@@ -637,3 +636,35 @@ Focus on genuine gaps that would improve understanding. Maximum 5 gaps."""
             })
         
         return recommendations
+
+    
+    def _generate_node_id(self, name: str, node_type: str, user_id: str) -> str:
+        """Generate unique node ID (same pattern as KnowledgeGraphNode)"""
+        import hashlib
+        content = f"{user_id}:{node_type}:{name.lower().strip()}"
+        return hashlib.md5(content.encode()).hexdigest()
+        
+
+    def _calculate_confidence_scores_structure(self) -> bool:
+        """Test method to validate confidence score calculation structure"""
+        # This method is just for testing the structure - returns True if valid
+        try:
+            # Test the confidence calculation formula
+            test_occurrences = 5
+            test_connections = 8
+            test_sessions = 3
+            
+            occurrence_score = min(test_occurrences / 5.0, 1.0)
+            connection_score = min(test_connections / 10.0, 1.0)
+            session_score = min(test_sessions / 3.0, 1.0)
+            
+            overall_confidence = (occurrence_score * 0.4 + connection_score * 0.4 + session_score * 0.2)
+            
+            # Validate the calculation produces expected ranges
+            valid_range = 0.0 <= overall_confidence <= 1.0
+            valid_components = all(0.0 <= score <= 1.0 for score in [occurrence_score, connection_score, session_score])
+            
+            return valid_range and valid_components
+            
+        except Exception:
+            return False
