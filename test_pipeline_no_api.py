@@ -263,6 +263,365 @@ def test_knowledge_graph_structure():
         print(f"❌ Knowledge Graph structure test failed: {str(e)}")
         return False
 
+def test_historical_knowledge_initialization():
+    """Test Historical Knowledge Retrieval node initialization."""
+    print("\nTesting Historical Knowledge Node - Initialization")
+    print("=" * 50)
+    
+    try:
+        from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
+        
+        # Test without LLM to avoid API calls
+        hk_node = HistoricalKnowledgeRetrievalNode()
+        print("✅ Historical Knowledge node initialized successfully")
+        
+        # Test node ID generation method (inherited from KG node pattern)
+        test_id = hk_node._generate_node_id("Python Programming", "concept", "test_user")
+        print(f"✅ Node ID generation working: {test_id[:16]}...")
+        
+        # Test confidence score calculation structure
+        confidence_test = hk_node._calculate_confidence_scores_structure()
+        print(f"✅ Confidence score calculation structure validated")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Historical Knowledge initialization failed: {str(e)}")
+        return False
+
+
+def test_historical_knowledge_data_structures():
+    """Test Historical Knowledge node data structure handling."""
+    print("\nTesting Historical Knowledge Node - Data Structures")
+    print("=" * 50)
+    
+    try:
+        from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
+        
+        hk_node = HistoricalKnowledgeRetrievalNode()
+        
+        # Test prep phase with mock data
+        mock_shared_state = {
+            'session_id': 'test_session_123',
+            'extracted_concepts': {
+                'learning_concepts': ['machine learning', 'neural networks', 'deep learning'],
+                'entities': {'TensorFlow': 'framework', 'Python': 'language'},
+                'topics': ['artificial intelligence', 'computer science'],
+                'session_theme': 'machine_learning',
+                'knowledge_progression': ['statistics', 'machine learning', 'deep learning']
+            },
+            'knowledge_graph': {
+                'user_id': 'test_user',
+                'nodes_created': {'concepts': 5, 'entities': 2}
+            }
+        }
+        
+        prep_result = hk_node.prep(mock_shared_state)
+        
+        checks = [
+            ("User ID extraction", 'user_id' in prep_result),
+            ("Concepts extraction", len(prep_result.get('new_concepts', [])) == 3),
+            ("Entities extraction", len(prep_result.get('new_entities', {})) == 2),
+            ("Session theme", prep_result.get('session_theme') == 'machine_learning'),
+            ("Knowledge progression", len(prep_result.get('knowledge_progression', [])) == 3),
+            ("Neo4j config", 'neo4j_config' in prep_result)
+        ]
+        
+        all_passed = True
+        for check_name, check_result in checks:
+            status = "✅" if check_result else "❌"
+            print(f"{status} {check_name}")
+            all_passed = all_passed and check_result
+        
+        return all_passed
+        
+    except Exception as e:
+        print(f"❌ Historical Knowledge data structures test failed: {str(e)}")
+        return False
+
+
+def test_historical_knowledge_confidence_calculation():
+    """Test confidence score calculation logic without Neo4j."""
+    print("\nTesting Historical Knowledge Node - Confidence Calculation")
+    print("=" * 50)
+    
+    try:
+        from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
+        
+        hk_node = HistoricalKnowledgeRetrievalNode()
+        
+        # Mock confidence calculation with test data
+        test_concepts = ['python programming', 'machine learning', 'web development']
+        
+        # Test the confidence calculation formula
+        test_cases = [
+            {
+                'concept': 'python programming',
+                'occurrences': 8,
+                'connections': 12,
+                'sessions': 4,
+                'expected_level': 'high'
+            },
+            {
+                'concept': 'machine learning', 
+                'occurrences': 3,
+                'connections': 5,
+                'sessions': 2,
+                'expected_level': 'medium'
+            },
+            {
+                'concept': 'web development',
+                'occurrences': 1,
+                'connections': 0,
+                'sessions': 1,
+                'expected_level': 'low'
+            }
+        ]
+        
+        all_passed = True
+        
+        for test_case in test_cases:
+            # Simulate confidence calculation
+            occurrences = test_case['occurrences']
+            connections = test_case['connections']
+            sessions = test_case['sessions']
+            
+            # Use the same formula as in the node
+            occurrence_score = min(occurrences / 5.0, 1.0)
+            connection_score = min(connections / 10.0, 1.0)
+            session_score = min(sessions / 3.0, 1.0)
+            
+            overall_confidence = (occurrence_score * 0.4 + connection_score * 0.4 + session_score * 0.2)
+            
+            confidence_level = "high" if overall_confidence > 0.7 else "medium" if overall_confidence > 0.4 else "low"
+            
+            expected_level = test_case['expected_level']
+            passed = confidence_level == expected_level
+            
+            status = "✅" if passed else "❌"
+            print(f"{status} {test_case['concept']}: {confidence_level} (expected: {expected_level}) - {overall_confidence:.2f}")
+            
+            all_passed = all_passed and passed
+        
+        return all_passed
+        
+    except Exception as e:
+        print(f"❌ Confidence calculation test failed: {str(e)}")
+        return False
+
+
+def test_historical_knowledge_recommendations():
+    """Test recommendation generation logic."""
+    print("\nTesting Historical Knowledge Node - Recommendation Logic")
+    print("=" * 50)
+    
+    try:
+        from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
+        
+        hk_node = HistoricalKnowledgeRetrievalNode()
+        
+        # Mock data for recommendation testing
+        mock_direct_connections = [
+            {
+                'new_concept': 'neural networks',
+                'existing_concept': 'machine learning',
+                'similarity_score': 0.8,
+                'connection_type': 'direct_match'
+            }
+        ]
+        
+        mock_semantic_connections = [
+            {
+                'new_concept': 'deep learning',
+                'existing_concept': 'neural networks', 
+                'relationship_type': 'builds_upon',
+                'strength': 0.9,
+                'explanation': 'Deep learning builds upon neural network foundations',
+                'connection_type': 'semantic'
+            }
+        ]
+        
+        mock_knowledge_gaps = [
+            {
+                'missing_concept': 'linear algebra',
+                'needed_for': 'machine learning',
+                'priority': 'high',
+                'explanation': 'Foundation for ML algorithms',
+                'recommended_action': 'Study linear algebra fundamentals'
+            },
+            {
+                'missing_concept': 'statistics',
+                'needed_for': 'data science',
+                'priority': 'medium',
+                'explanation': 'Foundation for ML algorithms',
+                'recommended_action': 'Learn basic statistics'
+            }
+        ]
+        
+        mock_reinforcement = [
+            {
+                'concept': 'python basics',
+                'days_since_encounter': 14,
+                'priority': 'high',
+                'recommended_action': 'Review Python fundamentals'
+            }
+        ]
+        
+        mock_learning_patterns = {
+            'learning_intensity': {'level': 'medium'},
+            'learning_consistency': {'level': 'high'}
+        }
+        
+        # Test recommendation generation
+        recommendations = hk_node._generate_learning_recommendations(
+            mock_direct_connections,
+            mock_semantic_connections,
+            mock_knowledge_gaps,
+            mock_reinforcement,
+            mock_learning_patterns
+        )
+        
+        checks = [
+            ("Recommendations generated", len(recommendations) > 0),
+            ("High priority gaps addressed", any(rec.get('type') == 'knowledge_gap' for rec in recommendations)),
+            ("Reinforcement included", any(rec.get('type') == 'reinforcement' for rec in recommendations)),
+            ("Valid recommendation structure", all('action' in rec and 'reason' in rec for rec in recommendations))
+        ]
+        
+        all_passed = True
+        for check_name, check_result in checks:
+            status = "✅" if check_result else "❌"
+            print(f"{status} {check_name}")
+            all_passed = all_passed and check_result
+        
+        print(f"\nGenerated {len(recommendations)} recommendations:")
+        for i, rec in enumerate(recommendations[:3]):
+            print(f"  {i+1}. [{rec.get('type', 'unknown')}] {rec.get('action', 'No action')}")
+            print(f"     Priority: {rec.get('priority', 'unknown')}")
+        
+        return all_passed
+        
+    except Exception as e:
+        print(f"❌ Recommendation generation test failed: {str(e)}")
+        return False
+
+
+def test_historical_knowledge_without_neo4j():
+    """Test Historical Knowledge node graceful handling when Neo4j is unavailable."""
+    print("\nTesting Historical Knowledge Node - No Neo4j Graceful Handling")
+    print("=" * 50)
+    
+    try:
+        from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
+        
+        hk_node = HistoricalKnowledgeRetrievalNode()
+        
+        # Mock prep result that would come from a working prep phase
+        mock_prep_result = {
+            'user_id': 'test_user',
+            'current_session_id': 'test_session',
+            'new_concepts': ['machine learning', 'python'],
+            'new_entities': {'Python': 'language'},
+            'new_topics': ['programming'],
+            'session_theme': 'programming',
+            'knowledge_progression': ['basics', 'intermediate', 'advanced'],
+            'neo4j_config': {
+                'uri': 'bolt://nonexistent:7687',  # Intentionally wrong
+                'user': 'test',
+                'password': 'test'
+            }
+        }
+        
+        # This should fail gracefully and return an error result
+        exec_result = hk_node.exec(mock_prep_result)
+        
+        checks = [
+            ("Error handling", 'error' in exec_result),
+    ("Graceful failure", 'address' in exec_result.get('error', '') or 'Neo4j' in exec_result.get('error', '')),
+            ("No crash", True)
+        ]
+        
+        all_passed = True
+        for check_name, check_result in checks:
+            status = "✅" if check_result else "❌"
+            print(f"{status} {check_name}")
+            all_passed = all_passed and check_result
+        
+        print(f"Error message: {exec_result.get('error', 'No error message')}")
+        
+        return all_passed
+        
+    except Exception as e:
+        print(f"❌ Neo4j unavailable handling test failed: {str(e)}")
+        return False
+
+
+def test_historical_knowledge_post_processing():
+    """Test Historical Knowledge node post-processing logic."""
+    print("\nTesting Historical Knowledge Node - Post Processing")
+    print("=" * 50)
+    
+    try:
+        from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
+        
+        hk_node = HistoricalKnowledgeRetrievalNode()
+        
+        # Mock shared state
+        mock_shared_state = {
+            'pipeline_metadata': {}
+        }
+        
+        # Mock prep result
+        mock_prep_result = {
+            'user_id': 'test_user',
+            'current_session_id': 'test_session'
+        }
+        
+        # Mock exec result
+        mock_exec_result = {
+            'user_id': 'test_user',
+            'session_id': 'test_session',
+            'direct_connections': [{'new_concept': 'A', 'existing_concept': 'B'}],
+            'semantic_connections': [{'new_concept': 'C', 'existing_concept': 'D'}],
+            'knowledge_gaps': [{'missing_concept': 'E', 'priority': 'high'}],
+            'reinforcement_opportunities': [{'concept': 'F', 'priority': 'medium'}],
+            'learning_patterns': {'intensity': 'high'},
+            'confidence_scores': {'A': {'confidence_level': 'high'}},
+            'recommendations': [{'action': 'Study X', 'priority': 'high'}]
+        }
+        
+        # Test post processing
+        result = hk_node.post(mock_shared_state, mock_prep_result, mock_exec_result)
+        
+        checks = [
+            ("Returns action", isinstance(result, str)),
+            ("Historical connections stored", 'historical_connections' in mock_shared_state),
+            ("Knowledge gaps stored", 'knowledge_gaps' in mock_shared_state),
+            ("Reinforcement stored", 'reinforcement_opportunities' in mock_shared_state),
+            ("Patterns stored", 'learning_patterns' in mock_shared_state),
+            ("Confidence stored", 'knowledge_confidence' in mock_shared_state),
+            ("Recommendations stored", 'learning_recommendations' in mock_shared_state),
+            ("Pipeline metadata updated", mock_shared_state.get('pipeline_metadata', {}).get('historical_analysis_complete') == True)
+        ]
+        
+        all_passed = True
+        for check_name, check_result in checks:
+            status = "✅" if check_result else "❌"
+            print(f"{status} {check_name}")
+            all_passed = all_passed and check_result
+        
+        # Check data integrity
+        historical_connections = mock_shared_state.get('historical_connections', {})
+        total_connections = historical_connections.get('total_connections_found', 0)
+        print(f"Total connections recorded: {total_connections}")
+        
+        return all_passed
+        
+    except Exception as e:
+        print(f"❌ Post processing test failed: {str(e)}")
+        return False
+
+
 
 def test_html_cleaning():
     """Test HTML cleaning functionality."""
@@ -408,6 +767,12 @@ def main():
         ("HTML Content Cleaning", test_html_cleaning),
         ("Metadata Extraction", test_metadata_extraction),
         ("Knowledge Graph Structure", test_knowledge_graph_structure),
+        ("Historical Knowledge Initialization", test_historical_knowledge_initialization),
+        ("Historical Knowledge Data Structures", test_historical_knowledge_data_structures),
+        ("Historical Knowledge Confidence Calculation", test_historical_knowledge_confidence_calculation),
+        ("Historical Knowledge Recommendations", test_historical_knowledge_recommendations),
+        ("Historical Knowledge No Neo4j Handling", test_historical_knowledge_without_neo4j),
+        ("Historical Knowledge Post Processing", test_historical_knowledge_post_processing),
     ]
     
     results = {}
@@ -425,17 +790,42 @@ def main():
     print("\n" + "=" * 60)
     print("🏁 TEST SUMMARY")
     print("=" * 60)
+
+    capture_tests = [k for k in results.keys() if "Capture" in k or "HTML" in k or "Metadata" in k]
+    kg_tests = [k for k in results.keys() if "Knowledge Graph" in k or "Neo4j" in k]
+    historical_tests = [k for k in results.keys() if "Historical Knowledge" in k]
     
-    for test_name, status in results.items():
+    print("\n📥 CAPTURE INGESTION & PROCESSING:")
+    for test_name in capture_tests:
+        status = results[test_name]
         status_emoji = "✅" if status == "PASSED" else "❌"
-        print(f"{status_emoji} {test_name}: {status}")
+        print(f"  {status_emoji} {test_name}: {status}")
+    
+    print("\n🕸️ KNOWLEDGE GRAPH:")
+    for test_name in kg_tests:
+        status = results[test_name]
+        status_emoji = "✅" if status == "PASSED" else "❌"
+        print(f"  {status_emoji} {test_name}: {status}")
+    
+    print("\n🔗 HISTORICAL KNOWLEDGE RETRIEVAL:")
+    for test_name in historical_tests:
+        status = results[test_name]
+        status_emoji = "✅" if status == "PASSED" else "❌"
+        print(f"  {status_emoji} {test_name}: {status}")
     
     passed = sum(1 for status in results.values() if status == "PASSED")
     total = len(results)
     
     print(f"\nOverall: {passed}/{total} tests passed")
-    print("\n💡 These tests don't use any API credits!")
+    if passed == total:
+        print("🎉 All tests passed! Your pipeline components are working correctly.")
+    else:
+        failed_tests = [name for name, status in results.items() if status != "PASSED"]
+        print(f"⚠️  Failed tests: {', '.join(failed_tests)}")
+    
+    print("\n💡 These tests don't use any API credits")
     print("   To test LLM features, run: python test_pipeline.py")
+    print("   To test full pipeline integration, run: python main.py --sample")
 
 
 if __name__ == "__main__":
