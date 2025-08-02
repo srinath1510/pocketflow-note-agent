@@ -143,6 +143,13 @@ class PipelineOrchestrator:
         raw_captures = shared_state.get('raw_captures', [])
         extracted_concepts = shared_state.get('extracted_concepts', {})
         content_analysis = shared_state.get('content_analysis', {})
+        knowledge_graph = shared_state.get('knowledge_graph', {})
+        historical_connections = shared_state.get('historical_connections', {})
+        knowledge_gaps = shared_state.get('knowledge_gaps', [])
+        reinforcement_opportunities = shared_state.get('reinforcement_opportunities', [])
+        learning_patterns = shared_state.get('learning_patterns', {})
+        learning_recommendations = shared_state.get('learning_recommendations', [])
+        notion_generation = shared_state.get('notion_generation', {})
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
         
         processing_stats = self._calculate_processing_stats(shared_state, raw_captures, extracted_concepts)
@@ -190,6 +197,13 @@ class PipelineOrchestrator:
                     'learning_recommendations': len(learning_recommendations),
                     'learning_patterns_analyzed': bool(learning_patterns)
                 },
+                'notion_generation': {
+                    'session_page_created': notion_generation.get('creation_summary', {}).get('session_created', False),
+                    'total_pages_created': notion_generation.get('creation_summary', {}).get('total_pages', 0),
+                    'session_page_url': notion_generation.get('session_page_url'),
+                    'databases': notion_generation.get('databases', {}),
+                    'generated_at': notion_generation.get('generated_at')
+                },
                 
                 'next_steps': self._generate_next_steps(learning_recommendations, knowledge_gaps)
             },
@@ -206,7 +220,8 @@ class PipelineOrchestrator:
                     'reinforcement_opportunities': reinforcement_opportunities,
                     'learning_patterns': learning_patterns,
                     'recommendations': learning_recommendations
-                }
+                },
+                'notion_generation': notion_generation 
             }
             
         }
@@ -222,6 +237,7 @@ class PipelineOrchestrator:
         content_summary = pipeline_metadata.get('content_analysis_summary', {})
         kg_summary = pipeline_metadata.get('knowledge_graph_summary', {})
         historical_summary = pipeline_metadata.get('historical_analysis_summary', {})
+        notion_summary = pipeline_metadata.get('notion_generation_summary', {})
         
         
         stats = {
@@ -246,11 +262,17 @@ class PipelineOrchestrator:
             'knowledge_graph_relationships': kg_summary.get('total_relationships', 0),
             'graph_density': kg_summary.get('graph_density', 0),
 
-            # Historical analysis stats - NEW!
+            # Historical analysis stats
             'historical_connections_found': historical_summary.get('connections_found', 0),
             'knowledge_gaps_identified': historical_summary.get('knowledge_gaps_identified', 0),
             'reinforcement_opportunities_found': historical_summary.get('reinforcement_opportunities', 0),
             'learning_patterns_detected': historical_summary.get('learning_patterns_detected', 0)
+
+            # Notion generation stats
+            'notion_pages_created': notion_summary.get('total_pages_created', 0),
+            'notion_session_created': notion_summary.get('session_url') is not None,
+            'notion_concepts_created': notion_summary.get('concepts_created', 0),
+            'notion_sources_created': notion_summary.get('sources_created', 0)
         }
         
         # Add additional statistics from processed captures
@@ -381,7 +403,20 @@ class PipelineOrchestrator:
             else:
                 insights.append(f"Generated {len(learning_recommendations)} learning recommendations")
         
+        # Notion generation insights
+        notion_generation = shared_state.get('notion_generation', {})
+        if notion_generation:
+            creation_summary = notion_generation.get('creation_summary', {})
+            total_pages = creation_summary.get('total_pages', 0)
+            session_url = notion_generation.get('session_page_url')
+            
+            if session_url:
+                insights.append(f"Generated beautiful Notion pages: {total_pages} total pages created")
+                insights.append("Your learning session is now beautifully formatted and ready to review in Notion")
+            else:
+                insights.append("Notion generation attempted but session page URL not available")
         
+        # Basic capture insights
         domains = set()
         knowledge_levels = {}
         
@@ -439,7 +474,7 @@ class PipelineOrchestrator:
             next_steps.append("Review and organize your captured notes")
         
         # Always include note generation as final step
-        next_steps.append("Generate structured notes from this analysis")
+        next_steps.append("Review your beautifully formatted learning session in Notion")
         
         return next_steps[:5]  # Limit to 5 next steps
         
