@@ -5,14 +5,19 @@ Orchestrates the AI Note Generation Pipeline for Web Research → Obsidian Notes
 import json
 import logging
 import sys
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from pocketflow import Flow
 from nodes.capture_ingestion import CaptureIngestionNode
 from nodes.content_analysis import ContentAnalysisNode
 from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
+from nodes.notion_note_generation import NotionNoteGenerationNode
 from config.pipeline_config import PipelineConfig
 
 from nodes.knowledge_graph import KnowledgeGraphNode
@@ -41,18 +46,25 @@ class NoteGenerationPipeline:
         self.content_analysis_node = ContentAnalysisNode()
         self.knowledge_graph_node = KnowledgeGraphNode()
         self.historical_knowledge_node = HistoricalKnowledgeRetrievalNode()
+        self.notion_generation_node = NotionNoteGenerationNode() 
 
+        self._build_pipeline()
+        self.logger.info("Pipeline initialized with 5 connected nodes including Notion Note Generation")
 
-        self.capture_ingestion_node >> self.content_analysis_node >> self.knowledge_graph_node
+    def _build_pipeline(self):
+        """Build the complete pipeline flow"""
+        # Linear flow: each node passes to the next
+        self.capture_ingestion_node >> self.content_analysis_node
+        self.content_analysis_node >> self.knowledge_graph_node
+        self.knowledge_graph_node >> self.historical_knowledge_node
+        self.historical_knowledge_node >> self.notion_generation_node
         
+        # Create the main flow starting from capture ingestion
         self.flow = Flow(self.capture_ingestion_node)
         self.flow >> self.content_analysis_node
         self.content_analysis_node >> self.knowledge_graph_node
         self.knowledge_graph_node >> self.historical_knowledge_node
-
-        # TODO: Add additional nodes as they are implemented
-
-        self.logger.info("Pipeline initialized with connected nodes")
+        self.historical_knowledge_node >> self.notion_generation_node
 
         
     def setup_logging(self):
@@ -109,12 +121,16 @@ class NoteGenerationPipeline:
             extracted_concepts = shared_state.get('extracted_concepts', {})
             knowledge_graph = shared_state.get('knowledge_graph', {})
             historical_connections = shared_state.get('historical_connections', {})
+            notion_generation = shared_state.get('notion_generation', {})
 
 
             self.logger.info(f"Processed {len(raw_captures)} captures")
             self.logger.info(f"Extracted {len(extracted_concepts.get('key_concepts', []))} concepts")
             self.logger.info(f"Created {knowledge_graph.get('nodes_created', {}).get('concepts', 0)} knowledge graph nodes")
             self.logger.info(f"Found {historical_connections.get('total_connections_found', 0)} historical connections")
+
+            if notion_generation:
+                self.logger.info(f"Generated Notion page: {notion_generation.get('session_page_url', 'Unknown')}")
 
 
             return shared_state
@@ -172,6 +188,13 @@ class NoteGenerationPipeline:
                 self.content_analysis_node.run(shared_state)
                 self.knowledge_graph_node.run(shared_state)
                 node = self.historical_knowledge_node
+            elif node_name == "notion_generation":
+                # Run all prerequisite nodes
+                self.capture_ingestion_node.run(shared_state)
+                self.content_analysis_node.run(shared_state)
+                self.knowledge_graph_node.run(shared_state)
+                self.historical_knowledge_node.run(shared_state)
+                node = self.notion_generation_node
             else:
                 raise ValueError(f"Node '{node_name}' not found in pipeline")
             
@@ -317,7 +340,7 @@ def main():
                 metrics = kg.get('metrics', {})
                 print(f"   Graph Density: {metrics.get('graph_density', 0):.3f}")
             
-            # Historical knowledge results - NEW!
+            # Historical knowledge results
             if "historical_connections" in result:
                 hist = result.get('historical_connections', {})
                 gaps = result.get('knowledge_gaps', [])
@@ -345,9 +368,40 @@ def main():
                         print(f"     • Missing: {gap.get('missing_concept', 'Unknown')}")
                         print(f"       Priority: {gap.get('priority', 'medium')}")
             
-            print("\n" + "="*60)
+            # Notion note generation results
+            if "notion_generation" in result:
+                notion = result["notion_generation"]
+                creation_summary = notion.get('creation_summary', {})
+                
+                print(f"\n📄 NOTION NOTE GENERATION:")
+                print(f"   Session Page Created: {'✅' if creation_summary.get('session_created') else '❌'}")
+                print(f"   Concepts Created: {creation_summary.get('concepts_created', 0)}")
+                print(f"   Sources Created: {creation_summary.get('sources_created', 0)}")
+                print(f"   Total Pages: {creation_summary.get('total_pages', 0)}")
+                
+                session_url = notion.get('session_page_url')
+                if session_url:
+                    print(f"\n   🔗 Notion Session Page:")
+                    print(f"      {session_url}")
+                    print(f"\n   💡 Open this URL to see your beautifully formatted learning session!")
+                else:
+                    print(f"\n   ⚠️ Session page URL not available")
+            
+            print("\n" + "="*70)
             print("Pipeline execution complete! 🎉")
-            print("Your learning session has been analyzed and connected to your existing knowledge.")
+            
+            # Show next steps
+            notion_gen = result.get('notion_generation')
+            if notion_gen and notion_gen.get('session_page_url'):
+                print("\n🎯 NEXT STEPS:")
+                print("1. Open your Notion session page to see the rich, formatted notes")
+                print("2. Explore the concept and source databases")
+                print("3. Review knowledge gaps and recommendations")
+                print("4. Use the todo items to guide your next learning steps")
+                print("\nYour AI-powered second brain is now living in Notion! 🧠✨")
+            else:
+                print("\nYour learning session has been analyzed and processed through all pipeline stages.")
+                print("Set up Notion integration to get beautiful, structured notes automatically!")
     
     except Exception as e:
         print(f"Pipeline execution failed: {str(e)}")
