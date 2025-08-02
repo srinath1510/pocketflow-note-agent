@@ -252,8 +252,11 @@ class HistoricalKnowledgeRetrievalNode(BaseNode):
             ORDER BY frequency DESC
             LIMIT 50
         """, user_id=user_id)
+
+        if not existing_concepts_result:
+            return []
         
-        existing_concepts = [record['concept'] for record in existing_concepts_result]
+        existing_concepts = [record['concept'] for record in existing_concepts_result if record and 'concept' in record]
         
         if not existing_concepts:
             return []
@@ -316,31 +319,45 @@ Only include relationships with strength >= 0.4. Return as a JSON array. Maximum
         for i, concept in enumerate(knowledge_progression):
             if i > 0:  # Skip first concept
                 prerequisite = knowledge_progression[i-1]
-                
-                # Check if prerequisite exists in user's knowledge base
-                result = session.run("""
-                    MATCH (c:Concept {user_id: $user_id})
-                    WHERE c.name =~ '(?i).*' + $prerequisite + '.*'
-                    RETURN c.name as concept, c.occurrence_count as frequency
-                    ORDER BY frequency DESC
-                    LIMIT 1
-                """, user_id=user_id, prerequisite=prerequisite)
-                
-                existing = result.single()
-                if not existing or existing['frequency'] < 2:
-                    gap = {
-                        'missing_concept': prerequisite,
-                        'needed_for': concept,
-                        'gap_type': 'prerequisite',
-                        'priority': 'high' if i == 1 else 'medium',
-                        'recommended_action': f"Learn '{prerequisite}' before diving deeper into '{concept}'"
-                    }
-                    gaps.append(gap)
-        
-        # Identify domain knowledge gaps using LLM
-        if self.llm_client and self.llm_client.is_available():
-            gaps.extend(self._identify_domain_gaps_with_llm(session, user_id, new_concepts))
-        
+                self.logger.info(f"Checking prerequisite: {prerequisite} for concept: {concept}")
+
+                try:
+                    # Check if prerequisite exists in user's knowledge base
+                    result = session.run("""
+                        MATCH (c:Concept {user_id: $user_id})
+                        WHERE c.name =~ '(?i).*' + $prerequisite + '.*'
+                        RETURN c.name as concept, c.occurrence_count as frequency
+                        ORDER BY frequency DESC
+                        LIMIT 1
+                    """, user_id=user_id, prerequisite=prerequisite)
+
+                    existing = result.single()
+                if not existing or existing.get('frequency', 0) < 2:
+                        gap = {
+                            'missing_concept': prerequisite,
+                            'needed_for': concept,
+                            'gap_type': 'prerequisite',
+                            'priority': 'high' if i == 1 else 'medium',
+                            'recommended_action': f"Learn '{prerequisite}' before diving deeper into '{concept}'"
+                        }
+                        gaps.append(gap)
+                        self.logger.info(f"Added gap for missing prerequisite: {prerequisite}")
+                except Exception as e:
+                    self.logger.error(f"Error checking prerequisite {prerequisite}: {str(e)}")
+                    continue
+        self.logger.info(f"Finished checking prerequisites, found {len(gaps)} gaps so far")
+
+        try:
+
+            # Identify domain knowledge gaps using LLM
+            if self.llm_client and self.llm_client.is_available():
+                self.logger.info("Starting LLM domain gap analysis...")
+                domain_gaps = self._identify_domain_gaps_with_llm(session, user_id, new_concepts)
+                gaps.extend(domain_gaps)
+                self.logger.info(f"LLM domain gap analysis complete, added {len(domain_gaps)} gaps")
+        except Exception as e:
+            self.logger.error(f"Error in LLM domain gap analysis: {str(e)}")
+            
         self.logger.info(f"Identified {len(gaps)} knowledge gaps")
         return gaps
     
@@ -348,16 +365,25 @@ Only include relationships with strength >= 0.4. Return as a JSON array. Maximum
         """Use LLM to identify domain-specific knowledge gaps"""
         gaps = []
         
-        # Get user's existing knowledge domains
-        domains_result = session.run("""
-            MATCH (c:Concept {user_id: $user_id})
-            WITH c.name as concept
-            RETURN collect(concept) as all_concepts
-        """, user_id=user_id)
-        
-        existing_concepts = domains_result.single()['all_concepts'] if domains_result.single() else []
+        try:
+            # Get user's existing knowledge domains
+            domains_result = session.run("""
+                MATCH (c:Concept {user_id: $user_id})
+                WITH c.name as concept
+                RETURN collect(concept) as all_concepts
+            """, user_id=user_id)
+
+            result_record = domains_result.single()
+            if result_record:
+                existing_concepts = result_record['all_concepts']  # Use bracket notation, not .get()
+            else:
+                existing_concepts = []
+        except Exception as e:
+            self.logger.warning(f"Error querying existing concepts: {str(e)}")
+            existing_concepts = []
         
         if not existing_concepts:
+            self.logger.info("No existing concepts found, skipping LLM domain gap analysis")
             return gaps
         
         prompt = f"""Analyze these new concepts a learner is studying: {', '.join(new_concepts)}
@@ -600,7 +626,7 @@ Focus on genuine gaps that would improve understanding. Maximum 5 gaps."""
                 'priority': 'high',
                 'action': gap['recommended_action'],
                 'concept': gap['missing_concept'],
-                'reason': f"Missing prerequisite: {gap['explanation']}"
+                'reason': f"Missing prerequisite: {gap.get('explanation', 'No explanation provided')}"
             })
         
         # Priority 2: Reinforce forgetting concepts
@@ -622,7 +648,7 @@ Focus on genuine gaps that would improve understanding. Maximum 5 gaps."""
                 'priority': 'low',
                 'action': f"Explore the relationship between '{conn['new_concept']}' and '{conn['existing_concept']}'",
                 'concept': conn['existing_concept'],
-                'reason': f"Strong {conn['relationship_type']} relationship: {conn['explanation']}"
+                'reason': f"Strong {conn['relationship_type']} relationship: {conn.get('explanation', 'Related concepts')}" 
             })
         
         # Learning pattern recommendations
@@ -643,7 +669,7 @@ Focus on genuine gaps that would improve understanding. Maximum 5 gaps."""
         import hashlib
         content = f"{user_id}:{node_type}:{name.lower().strip()}"
         return hashlib.md5(content.encode()).hexdigest()
-        
+
 
     def _calculate_confidence_scores_structure(self) -> bool:
         """Test method to validate confidence score calculation structure"""
