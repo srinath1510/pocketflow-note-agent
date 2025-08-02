@@ -332,7 +332,7 @@ Only include relationships with strength >= 0.4. Return as a JSON array. Maximum
                     """, user_id=user_id, prerequisite=prerequisite)
 
                     existing = result.single()
-                if not existing or existing.get('frequency', 0) < 2:
+                    if not existing or existing.get('frequency', 0) < 2:
                         gap = {
                             'missing_concept': prerequisite,
                             'needed_for': concept,
