@@ -57,6 +57,16 @@ except Exception as e:
     logger.error(f"Failed to initialize pipeline orchestrator: {str(e)}")
     pipeline_orchestrator = None
 
+def serialize_for_json(obj):
+    """Convert datetime objects and other non-serializable objects to JSON-safe formats"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_for_json(item) for item in obj]
+    else:
+        return obj
 
 def hash_content(content):
     """Create hash of content to detect duplicates"""
@@ -424,13 +434,75 @@ def get_batches():
 def get_results():
     """Get processing results"""
     try:
-        return jsonify({
-            "results": processing_results,
-            "total_results": len(processing_results),
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        bake_id = request.args.get('bake_id')
+        
+        if bake_id:
+            # Look for specific bake result in memory first
+            for result in processing_results:
+                if result.get('bake_id') == bake_id:
+                    serialized_result = serialize_for_json(result)
+                    return jsonify({
+                        "result": serialized_result,
+                        "found": True,
+                        "source": "memory",
+                        "bake_id": bake_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+            
+            # If not found in memory, try to load from file
+            result_file = RESULTS_DIR / f"bake_{bake_id}_pipeline_result.json"
+            if result_file.exists():
+                try:
+                    with open(result_file, 'r') as f:
+                        file_result = json.load(f)
+                    return jsonify({
+                        "result": file_result,
+                        "found": True,
+                        "source": "file",
+                        "bake_id": bake_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception as file_error:
+                    logger.warning(f"Error reading result file: {file_error}")
+            
+            # Try summary file as fallback
+            summary_file = RESULTS_DIR / f"bake_{bake_id}_summary.json"
+            if summary_file.exists():
+                try:
+                    with open(summary_file, 'r') as f:
+                        summary_result = json.load(f)
+                    return jsonify({
+                        "result": summary_result,
+                        "found": True,
+                        "source": "summary_file",
+                        "bake_id": bake_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception as summary_error:
+                    logger.warning(f"Error reading summary file: {summary_error}")
+            
+            # Not found anywhere
+            return jsonify({
+                "result": None,
+                "found": False,
+                "bake_id": bake_id,
+                "message": f"No results found for bake_id: {bake_id}",
+                "searched_locations": ["memory", "pipeline_result_file", "summary_file"],
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }), 404
+        
+        else:
+            # Return all results
+            serialized_results = serialize_for_json(processing_results)
+            return jsonify({
+                "results": serialized_results,
+                "total_results": len(processing_results),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+            
     except Exception as e:
         logger.error(f"Error retrieving results: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": f"Error retrieving results: {str(e)}"}), 500
 
 
@@ -577,24 +649,16 @@ def process_bake_background(bake_data):
     bake_id = bake_data['bake_id']
     logger.info(f"Processing bake {bake_id} in background")
     
+    # small delay to ensure all batch notes are stored
+    time.sleep(1)
     try:
         if not pipeline_orchestrator:
             raise Exception("Pipeline orchestrator not available")
         
-        session_notes = []
-        for note in notes_storage:
-            display_note = {
-                "id": note.get('id') or note.get('metadata', {}).get('local_id') or f"note_{len(session_notes)}",
-                "title": note.get('source', {}).get('title', 'Untitled'),
-                "url": note.get('source', {}).get('url', ''),
-                "content_full": note.get('content', ''),
-                "captured_at": note.get('metadata', {}).get('captured_at', 'unknown'),
-                "stored_at": note.get('stored_at', 'unknown'),
-                "raw_note": note
-            }
-            session_notes.append(display_note)
+        session_notes = notes_storage.copy()
         
         logger.info(f"Running pipeline on {len(session_notes)} notes for bake {bake_id}")
+        logger.info(f"Sample note structure: {json.dumps(session_notes[0] if session_notes else {}, indent=2)}")
 
         pipeline_results = pipeline_orchestrator.run_pipeline(bake_data, session_notes)
 
@@ -650,7 +714,6 @@ def process_bake_background(bake_data):
         error_file = RESULTS_DIR / f"bake_{bake_id}_error.json"
         with open(error_file, 'w') as f:
             json.dump(error_result, f, indent=2, default=str)
-
         
 
 def save_individual_notes_background(notes, batch_id):

@@ -123,14 +123,155 @@ def create_detailed_test_batch():
         ]
     }
 
-def capture_api_call_logs():
-    """Monitor logs for API call patterns"""
-    print("📡 Starting API call monitoring...")
-    print("   (Check your server logs for these patterns:)")
-    print("   - 'Batch processing setup: X API calls estimated'")
-    print("   - 'Processed X captures with Y LLM calls'")
-    print("   - 'API calls saved: Z'")
-    print("   - HTTP requests to api.anthropic.com")
+def wait_for_bake_completion(bake_id, max_wait_seconds=60):
+    """Poll for bake completion with proper timeout"""
+    print(f"⏳ Waiting for bake {bake_id} to complete...")
+    
+    start_time = time.time()
+    check_interval = 3  # Check every 3 seconds
+    
+    while time.time() - start_time < max_wait_seconds:
+        try:
+            # Check if results are available
+            response = requests.get(f"{API_BASE}/api/results?bake_id={bake_id}")
+            
+            if response.status_code == 200:
+                result_data = response.json()
+                if result_data.get('found') and result_data.get('result'):
+                    elapsed = time.time() - start_time
+                    print(f"✅ Bake completed in {elapsed:.1f}s")
+                    return result_data['result']
+                    
+            elif response.status_code == 404:
+                # Still processing, continue waiting
+                elapsed = time.time() - start_time
+                print(f"   ... {elapsed:.0f}s elapsed (still processing)")
+            else:
+                print(f"   Unexpected status: {response.status_code}")
+                
+            time.sleep(check_interval)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"   Error checking results: {e}")
+            time.sleep(check_interval)
+    
+    print(f"❌ Timeout after {max_wait_seconds}s - checking if results exist anyway...")
+    
+    # Final check - sometimes results exist but there's a timing issue
+    try:
+        response = requests.get(f"{API_BASE}/api/results")
+        if response.status_code == 200:
+            all_results = response.json().get('results', [])
+            # Find the most recent result with our bake_id
+            for result in reversed(all_results):
+                if result.get('bake_id') == bake_id:
+                    print(f"✅ Found result for bake {bake_id} in final check")
+                    return result
+            
+            # If no exact match, return the most recent result
+            if all_results:
+                print(f"⚠️  Using most recent result (bake_id mismatch)")
+                return all_results[-1]
+    except Exception as e:
+        print(f"Final check failed: {e}")
+    
+    return None
+
+def analyze_batch_metrics(result, expected_notes):
+    """Analyze and report on batch optimization metrics"""
+    print("\n📈 BATCH OPTIMIZATION ANALYSIS")
+    print("=" * 50)
+    
+    try:
+        # Look for batch metrics in multiple possible locations
+        batch_metrics = None
+        processing_summary = result.get('processing_summary', {})
+        
+        # Check different possible locations for batch metrics
+        locations_to_check = [
+            ('processing_summary.batch_optimization_metrics', processing_summary.get('batch_optimization_metrics')),
+            ('results.batch_optimization_metrics', result.get('results', {}).get('batch_optimization_metrics')),
+            ('detailed_results.content_analysis.optimization_metrics', 
+             result.get('detailed_results', {}).get('content_analysis', {}).get('optimization_metrics')),
+        ]
+        
+        for location_name, metrics in locations_to_check:
+            if metrics:
+                print(f"📍 Found batch metrics in: {location_name}")
+                batch_metrics = metrics
+                break
+        
+        # Basic processing metrics
+        print(f"🧠 Content Analysis Results:")
+        print(f"   Notes processed: {result.get('input_notes_count', 0)}/{expected_notes}")
+        
+        # Check different ways concepts might be stored
+        concepts_count = 0
+        if 'processing_summary' in result:
+            concepts_count = processing_summary.get('concepts_extracted', 0)
+        if concepts_count == 0 and 'results' in result:
+            concepts_count = len(result.get('results', {}).get('concepts_extracted', []))
+        if concepts_count == 0 and 'detailed_results' in result:
+            extracted_concepts = result.get('detailed_results', {}).get('content_analysis', {}).get('extracted_concepts', {})
+            concepts_count = len(extracted_concepts.get('learning_concepts', []))
+        
+        print(f"   Concepts extracted: {concepts_count}")
+        print(f"   Status: {result.get('status', 'unknown')}")
+        
+        # Batch optimization metrics analysis
+        if batch_metrics:
+            print(f"\n⚡ BATCH OPTIMIZATION METRICS FOUND!")
+            api_calls_made = batch_metrics.get('api_calls_made', 0)
+            api_calls_saved = batch_metrics.get('api_calls_saved', 0)
+            reduction_percent = batch_metrics.get('api_calls_reduction_percent', 0)
+            cache_hit_rate = batch_metrics.get('cache_hit_rate', 0)
+            method_breakdown = batch_metrics.get('method_breakdown', {})
+            
+            print(f"   API calls made: {api_calls_made}")
+            print(f"   API calls saved: {api_calls_saved}")
+            print(f"   Reduction percentage: {reduction_percent:.1f}%")
+            print(f"   Cache hit rate: {cache_hit_rate:.1f}%")
+            print(f"   Processing methods:")
+            for method, count in method_breakdown.items():
+                print(f"     • {method}: {count} captures")
+            
+            # Success criteria
+            success = True
+            
+            if api_calls_saved <= 0:
+                print(f"   ⚠️  WARNING: Expected API call savings, got {api_calls_saved}")
+                success = False
+            
+            if method_breakdown.get('llm_batch', 0) == 0:
+                print(f"   ⚠️  WARNING: No LLM batch processing detected!")
+                print(f"   Available methods: {list(method_breakdown.keys())}")
+                success = False
+            
+            if concepts_count == 0:
+                print(f"   ⚠️  WARNING: No concepts were extracted!")
+                success = False
+                
+            if reduction_percent < 30:  # Expect at least 30% reduction
+                print(f"   ⚠️  WARNING: Low API call reduction: {reduction_percent:.1f}%")
+                success = False
+            
+            return success
+            
+        else:
+            print(f"\n❌ NO BATCH OPTIMIZATION METRICS FOUND!")
+            print(f"   Available result keys: {list(result.keys())}")
+            
+            # Show what's in processing_summary
+            if processing_summary:
+                print(f"   Processing summary keys: {list(processing_summary.keys())}")
+            
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error analyzing batch metrics: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 def test_comprehensive_batch_optimization():
     """Test that verifies actual batch optimization metrics"""
@@ -139,8 +280,11 @@ def test_comprehensive_batch_optimization():
     
     # 1. Clear existing notes
     print("🧹 Clearing existing notes...")
-    response = requests.delete(f"{API_BASE}/api/notes")
-    print(f"   Status: {response.status_code}")
+    try:
+        response = requests.delete(f"{API_BASE}/api/notes")
+        print(f"   Status: {response.status_code}")
+    except Exception as e:
+        print(f"   Warning: Could not clear notes: {e}")
     
     # 2. Send test batch designed for LLM processing
     print("📤 Sending crypto-focused test batch (5 notes)...")
@@ -159,7 +303,7 @@ def test_comprehensive_batch_optimization():
         return False
     
     batch_result = response.json()
-    print(f"   ✅ Batch processed: {batch_result['notes_processed']} notes")
+    print(f"   ✅ Batch processed: {batch_result.get('notes_processed', 0)} notes")
     
     # 3. Wait for background processing
     print("⏳ Waiting for background processing...")
@@ -167,7 +311,11 @@ def test_comprehensive_batch_optimization():
     
     # 4. Monitor API calls during bake
     print("🔥 Triggering bake with API call monitoring...")
-    capture_api_call_logs()
+    print("📡 Monitor your server logs for:")
+    print("   • 'Batch processing setup: X API calls estimated'")
+    print("   • 'Processing batch 1/Y with Z captures'") 
+    print("   • 'Processed X captures with Y LLM calls'")
+    print("   • 'API calls saved: Z'")
     
     bake_data = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -175,10 +323,9 @@ def test_comprehensive_batch_optimization():
         "includeAdditionalNotes": False
     }
     
-    start_time = time.time()
     response = requests.post(f"{API_BASE}/api/bake", json=bake_data)
     
-    if response.status_code != 200:
+    if response.status_code not in [200, 201]:
         print(f"❌ Bake failed: {response.status_code} - {response.text}")
         return False
     
@@ -186,155 +333,66 @@ def test_comprehensive_batch_optimization():
     bake_id = bake_result['bake_id']
     print(f"   ✅ Bake initiated: {bake_id}")
     
-    # 5. Wait for completion with progress updates
-    print("⏳ Waiting for pipeline completion...")
-    for i in range(20):  # 20 seconds max
-        time.sleep(1)
-        if i % 5 == 0:
-            print(f"   ... {i+1}s elapsed")
+    # 5. Wait for completion with better polling
+    result = wait_for_bake_completion(bake_id, max_wait_seconds=60)
     
-    processing_time = time.time() - start_time
-    print(f"   ⏱️ Total processing time: {processing_time:.1f}s")
-    
-    # 6. Get detailed results
-    print("📊 Analyzing batch optimization results...")
-    response = requests.get(f"{API_BASE}/api/results")
-    
-    if response.status_code != 200:
-        print(f"❌ Failed to get results: {response.status_code}")
+    if not result:
+        print("❌ Could not retrieve bake results")
         return False
     
-    results = response.json()
-    if not results['results']:
-        print("❌ No results found")
-        return False
-    
-    # Find our bake result
-    latest_result = None
-    for result in results['results']:
-        if result.get('bake_id') == bake_id:
-            latest_result = result
-            break
-    
-    if not latest_result:
-        latest_result = results['results'][-1]
-    
-    # 7. Analyze batch optimization metrics
-    return analyze_batch_metrics(latest_result, len(batch_data['notes']))
+    # 6. Analyze batch optimization metrics
+    return analyze_batch_metrics(result, len(batch_data['notes']))
 
-def analyze_batch_metrics(result, expected_notes):
-    """Analyze and report on batch optimization metrics"""
-    print("📈 BATCH OPTIMIZATION ANALYSIS")
-    print("=" * 50)
-    
-    # Basic metrics
-    insights = result.get('insights', [])
-    processing_summary = result.get('processing_summary', {})
-    
-    print(f"🧠 Content Analysis Results:")
-    print(f"   Notes processed: {result.get('input_notes_count', 0)}/{expected_notes}")
-    print(f"   Concepts extracted: {processing_summary.get('concepts_extracted', 0)}")
-    print(f"   Entities found: {processing_summary.get('entities_found', 0)}")
-    print(f"   Topics identified: {processing_summary.get('topics_identified', 0)}")
-    print(f"   Insights generated: {len(insights)}")
-    
-    # Batch optimization metrics
-    batch_metrics = processing_summary.get('batch_optimization_metrics', {})
-    
-    if batch_metrics:
-        print(f"\n⚡ BATCH OPTIMIZATION METRICS:")
-        api_calls_made = batch_metrics.get('api_calls_made', 0)
-        api_calls_saved = batch_metrics.get('api_calls_saved', 0)
-        total_without_batching = api_calls_made + api_calls_saved
-        
-        print(f"   API calls made: {api_calls_made}")
-        print(f"   API calls saved: {api_calls_saved}")
-        print(f"   Total without batching: {total_without_batching}")
-        
-        if total_without_batching > 0:
-            reduction_percent = (api_calls_saved / total_without_batching) * 100
-            print(f"   Reduction percentage: {reduction_percent:.1f}%")
-        
-        cache_hit_rate = batch_metrics.get('cache_hit_rate', 0)
-        print(f"   Cache hit rate: {cache_hit_rate:.1f}%")
-        
-        method_breakdown = batch_metrics.get('method_breakdown', {})
-        print(f"   Processing methods: {method_breakdown}")
-        
-        # Validation
-        success = True
-        if api_calls_saved == 0:
-            print("   ⚠️  WARNING: No API calls were saved!")
-            success = False
-        
-        if processing_summary.get('concepts_extracted', 0) == 0:
-            print("   ⚠️  WARNING: No concepts were extracted!")
-            success = False
-            
-        if method_breakdown.get('llm_batch', 0) == 0:
-            print("   ⚠️  WARNING: No LLM batch processing detected!")
-            success = False
-        
-        return success
-    else:
-        print("   ❌ No batch optimization metrics found!")
-        print("   This suggests the batch processing is not working correctly.")
+def test_api_health():
+    """Test API connectivity"""
+    try:
+        response = requests.get(f"{API_BASE}/api/health", timeout=5)
+        if response.status_code == 200:
+            print("✅ API is healthy")
+            return True
+        else:
+            print(f"❌ API health check failed: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ API not reachable: {e}")
         return False
-
-def test_api_call_monitoring():
-    """Test with explicit API call monitoring"""
-    print("\n🔍 API CALL MONITORING TEST")
-    print("=" * 40)
-    
-    print("📝 Instructions for manual verification:")
-    print("   1. Monitor your server logs during the test")
-    print("   2. Look for these specific log messages:")
-    print("      • 'Batch processing setup: X API calls estimated'")
-    print("      • 'Processing batch 1/Y with Z captures'")
-    print("      • 'Processed X captures with Y LLM calls'")
-    print("      • 'API calls saved: Z'")
-    print("   3. Watch for HTTP requests to api.anthropic.com in logs")
-    print("   4. Compare expected vs actual API calls")
-    
-    expected_individual_calls = 5  # One per note
-    expected_batch_calls = 2       # Batch size of 3, so 2 batches
-    expected_savings = expected_individual_calls - expected_batch_calls
-    
-    print(f"\n📊 Expected Results:")
-    print(f"   Individual processing: {expected_individual_calls} API calls")
-    print(f"   Batch processing: {expected_batch_calls} API calls")
-    print(f"   Expected savings: {expected_savings} API calls")
 
 def main():
     """Run comprehensive batch optimization test"""
+    print("🚀 STARTING BATCH OPTIMIZATION TEST")
+    print("=" * 60)
+    
+    # Check API health first
+    if not test_api_health():
+        print("❌ Cannot proceed without healthy API")
+        return
+    
     try:
-        # Check API health
-        response = requests.get(f"{API_BASE}/api/health")
-        if response.status_code != 200:
-            print(f"❌ API not available: {response.status_code}")
-            return
-        
-        print("✅ API is healthy")
-        
-        # Run comprehensive test
+        # Run the comprehensive test
         success = test_comprehensive_batch_optimization()
         
-        # Run monitoring test
-        test_api_call_monitoring()
-        
+        # Final results
+        print("\n" + "=" * 60)
         if success:
-            print(f"\n🎉 BATCH OPTIMIZATION TEST PASSED!")
-            print(f"   ✅ API calls are being batched and reduced")
-            print(f"   ✅ Concepts are being extracted properly")
-            print(f"   ✅ Batch metrics are being tracked")
+            print("🎉 BATCH OPTIMIZATION TEST PASSED!")
+            print("   ✅ API calls are being batched and reduced")
+            print("   ✅ Concepts are being extracted properly")
+            print("   ✅ Batch metrics are being tracked correctly")
+            print("\n💡 Your intelligent batching system is working perfectly!")
         else:
-            print(f"\n❌ BATCH OPTIMIZATION TEST FAILED!")
-            print(f"   Check your server logs for detailed error messages")
-            print(f"   Verify your LLM provider (Anthropic) is configured correctly")
-            print(f"   Ensure ANTHROPIC_API_KEY is set")
+            print("❌ BATCH OPTIMIZATION TEST FAILED!")
+            print("   Check your server logs for detailed information")
+            print("   Look for the specific log messages mentioned above")
+            print("\n🔧 Troubleshooting tips:")
+            print("   1. Verify ANTHROPIC_API_KEY is set correctly")
+            print("   2. Check that all 5 notes are being processed")
+            print("   3. Ensure the ContentAnalysisNode batch logic is working")
+            print("   4. Look for any errors in the pipeline execution")
         
+    except KeyboardInterrupt:
+        print("\n🛑 Test interrupted by user")
     except Exception as e:
-        print(f"❌ Test failed with exception: {str(e)}")
+        print(f"\n❌ Test failed with exception: {str(e)}")
         import traceback
         traceback.print_exc()
 

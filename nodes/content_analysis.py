@@ -149,6 +149,18 @@ class ContentAnalysisNode(BaseNode):
             
             # Step 5: Combine and format final results
             combined_result = self._combine_all_analysis_results(all_results, synthesis_result, batch_config)
+
+            batch_metrics = combined_result.get('batch_metrics', {})
+            self.logger.info(f"🔍 DEBUG: ContentAnalysisNode.exec() returning batch_metrics: {batch_metrics}")
+            
+            if not batch_metrics:
+                self.logger.error("🚨 CRITICAL: No batch_metrics in combined_result!")
+                self.logger.error(f"   Available keys: {list(combined_result.keys())}")
+            else:
+                api_calls_made = batch_metrics.get('api_calls_made', 0)
+                api_calls_saved = batch_metrics.get('api_calls_saved', 0)
+                self.logger.info(f"✅ BATCH METRICS FOUND: {api_calls_made} made, {api_calls_saved} saved")
+            
             
             self.logger.info(f"Batch analysis complete: {len(all_results)} captures processed with "
                            f"{batch_config['estimated_api_calls']} API calls")
@@ -172,12 +184,12 @@ class ContentAnalysisNode(BaseNode):
         shared_state['extracted_concepts'] = exec_result.get('extracted_concepts', {})
         shared_state['content_analysis'] = exec_result.get('content_analysis', {})
 
-        batch_metrics = {
-            'api_calls_made': exec_result.get('batch_metrics', {}).get('api_calls_made', 0),
-            'api_calls_saved': exec_result.get('batch_metrics', {}).get('api_calls_saved', 0),
-            'cache_hit_rate': exec_result.get('batch_metrics', {}).get('cache_hit_rate', 0),
-            'processing_method_breakdown': exec_result.get('batch_metrics', {}).get('method_breakdown', {})
-        }
+        batch_metrics = exec_result.get('batch_metrics', {})
+        if batch_metrics:
+            shared_state['batch_metrics'] = batch_metrics
+            self.logger.info(f"🔍 Added batch_metrics to shared_state: {batch_metrics}")
+        else:
+            self.logger.warning("⚠️  No batch_metrics found in exec_result")
 
         concepts = exec_result.get('extracted_concepts', {})
         processing_summary = {
@@ -233,7 +245,7 @@ class ContentAnalysisNode(BaseNode):
         metadata = capture.get('metadata', {})
         
         # Skip LLM for very short content
-        if len(content.split()) < self.min_content_length:
+        if len(content.split()) < 3:
             return True
         
         # Skip LLM for simple reference pages
@@ -468,7 +480,81 @@ class ContentAnalysisNode(BaseNode):
             'concept_connections': {},  # Will be built by knowledge graph
             'synthesis_method': 'rule_based'
         }
+
     
+    def _llm_synthesize_complex_session(self, all_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Use LLM to synthesize complex multi-topic sessions"""
+    
+        if not self.llm_client or not self.llm_client.is_available():
+            self.logger.warning("LLM not available for complex synthesis, falling back to rule-based")
+            # Extract concepts for fallback
+            all_concepts = []
+            all_topics = []
+            for result in all_results:
+                all_concepts.extend(result.get('learning_concepts', []))
+                all_topics.append(result.get('main_topic', 'unknown'))
+            return self._rule_based_synthesis(all_concepts, list(set(all_topics)), 'intermediate')
+        
+        try:
+            # Extract key data for synthesis
+            all_concepts = []
+            all_topics = []
+            all_complexity_levels = []
+            
+            for result in all_results:
+                all_concepts.extend(result.get('learning_concepts', []))
+                all_topics.append(result.get('main_topic', 'unknown'))
+                all_complexity_levels.append(result.get('complexity', 'intermediate'))
+            
+            # Create synthesis prompt
+            unique_concepts = list(dict.fromkeys(all_concepts))  # Remove duplicates, preserve order
+            unique_topics = list(set(all_topics))
+            primary_complexity = max(set(all_complexity_levels), key=all_complexity_levels.count)
+            
+            prompt = f"""Analyze this complex learning session with multiple concepts and topics:
+
+    CONCEPTS LEARNED: {', '.join(unique_concepts[:15])}
+    TOPICS COVERED: {', '.join(unique_topics)}
+    SESSION COMPLEXITY: {primary_complexity}
+    TOTAL CAPTURES: {len(all_results)}
+
+    Synthesize the session and return JSON:
+    {{
+        "session_learning_theme": "primary_unified_theme",
+        "knowledge_progression": ["concept1", "concept2", "concept3"],
+        "learning_path": ["logical_step1", "logical_step2", "logical_step3"],
+        "session_complexity": "beginner|intermediate|advanced|expert",
+        "learning_goals": ["specific_goal1", "specific_goal2"],
+        "next_steps": ["actionable_step1", "actionable_step2"],
+        "concept_connections": {{"concept1": ["related1", "related2"]}},
+        "synthesis_method": "llm_complex"
+    }}
+
+    Focus on the learning journey and concept relationships. Return valid JSON only."""
+
+            messages = [
+                {"role": "system", "content": "You are an expert learning session synthesizer. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ]
+            
+            request_params = self.llm_client.set_provider_specific_defaults(
+                temperature=0.3,
+                max_tokens=800
+            )
+            
+            response_text = self.llm_client.chat_completion(messages, **request_params)
+            synthesis_result = json.loads(response_text)
+            
+            self.logger.info(f"LLM synthesis completed for complex session with {len(all_results)} captures")
+            return synthesis_result
+            
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"LLM synthesis JSON parsing failed: {str(e)}, falling back to rule-based")
+            return self._rule_based_synthesis(all_concepts, unique_topics, primary_complexity)
+        except Exception as e:
+            self.logger.warning(f"LLM synthesis failed: {str(e)}, falling back to rule-based")
+            return self._rule_based_synthesis(all_concepts, unique_topics, primary_complexity)
+        
 
     def _combine_all_analysis_results(self, all_results: List[Dict[str, Any]], synthesis: Dict[str, Any], batch_config: Dict[str, Any]) -> Dict[str, Any]:
         """Combine all analysis results into final structure"""
@@ -649,3 +735,60 @@ class ContentAnalysisNode(BaseNode):
         batch_calls = (llm_required + self.batch_size - 1) // self.batch_size if llm_required > 0 else 0
         synthesis_calls = 1 if llm_required > 0 else 0
         return batch_calls + synthesis_calls
+
+
+    def _llm_synthesize_complex_session(self, all_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Use LLM to synthesize complex multi-topic sessions"""
+        
+        if not self.llm_client or not self.llm_client.is_available():
+            return self._rule_based_synthesis([], ['general'], 'intermediate')
+        
+        # Extract key data for synthesis
+        all_concepts = []
+        all_topics = []
+        
+        for result in all_results:
+            all_concepts.extend(result.get('learning_concepts', []))
+            all_topics.append(result.get('main_topic', 'unknown'))
+        
+        # Create synthesis prompt
+        prompt = f"""Analyze this learning session with multiple concepts: {', '.join(all_concepts[:10])}
+
+    The session covered these topics: {', '.join(set(all_topics))}
+
+    Synthesize the session and return JSON:
+    {{
+    "session_learning_theme": "primary_theme",
+    "knowledge_progression": ["concept1", "concept2", "concept3"],
+    "learning_path": ["step1", "step2", "step3"],
+    "session_complexity": "beginner|intermediate|advanced",
+    "learning_goals": ["goal1", "goal2"],
+    "next_steps": ["action1", "action2"],
+    "concept_connections": {{"concept1": ["related1", "related2"]}},
+    "synthesis_method": "llm_complex"
+    }}
+
+    Focus on the learning journey and concept relationships. Return valid JSON only."""
+
+        try:
+            messages = [
+                {"role": "system", "content": "You are an expert learning session synthesizer. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ]
+            
+            request_params = self.llm_client.set_provider_specific_defaults(
+                temperature=0.3,
+                max_tokens=800
+            )
+            
+            response_text = self.llm_client.chat_completion(messages, **request_params)
+            synthesis_result = json.loads(response_text)
+            
+            return synthesis_result
+            
+        except Exception as e:
+            self.logger.warning(f"LLM synthesis failed: {str(e)}, falling back to rule-based")
+            return self._rule_based_synthesis(all_concepts, list(set(all_topics)), 'intermediate')
+
+    
+    
