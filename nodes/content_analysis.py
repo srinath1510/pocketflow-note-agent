@@ -139,7 +139,7 @@ class ContentAnalysisNode(BaseNode):
             
             # Step 3: Batch process complex content requiring LLM
             batch_results = self._process_captures_in_batches(capture_categories['llm_required'])
-            self.logger.info(f"Processed {len(batch_results)} captures with {len(batch_results) // self.batch_size + 1} LLM calls")
+            self.logger.info(f"Processed {len(batch_results)} captures with {(len(batch_results) // self.batch_size) + 1 if batch_results else 0} LLM calls")
             
             # Combine all results
             all_results = cached_results + rule_based_results + batch_results
@@ -151,28 +151,47 @@ class ContentAnalysisNode(BaseNode):
             combined_result = self._combine_all_analysis_results(all_results, synthesis_result, batch_config)
 
             batch_metrics = combined_result.get('batch_metrics', {})
-            self.logger.info(f"🔍 DEBUG: ContentAnalysisNode.exec() returning batch_metrics: {batch_metrics}")
             
             if not batch_metrics:
                 self.logger.error("🚨 CRITICAL: No batch_metrics in combined_result!")
                 self.logger.error(f"   Available keys: {list(combined_result.keys())}")
+                
+                # default batch_metrics to prevent crash
+                default_batch_metrics = {
+                    'api_calls_made': 0,
+                    'api_calls_saved': 0,
+                    'api_calls_reduction_percent': 0,
+                    'cache_hit_rate': 0,
+                    'method_breakdown': {},
+                    'total_captures_processed': len(all_results)
+                }
+                combined_result['batch_metrics'] = default_batch_metrics
+                self.logger.warning(f"🔧 CREATED DEFAULT batch_metrics: {default_batch_metrics}")
             else:
                 api_calls_made = batch_metrics.get('api_calls_made', 0)
                 api_calls_saved = batch_metrics.get('api_calls_saved', 0)
                 self.logger.info(f"✅ BATCH METRICS FOUND: {api_calls_made} made, {api_calls_saved} saved")
             
-            
             self.logger.info(f"Batch analysis complete: {len(all_results)} captures processed with "
-                           f"{batch_config['estimated_api_calls']} API calls")
-            return combined_result
+                        f"{batch_config['estimated_api_calls']} API calls")
             
+            return combined_result
+
         except Exception as e:
             self.logger.error(f"Batch analysis failed: {str(e)}")
             return {
                 'error': f"Batch analysis failed: {str(e)}",
                 'extracted_concepts': {},
-                'content_analysis': {'method': 'failed', 'error': str(e)}
+                'content_analysis': {'method': 'failed', 'error': str(e)},
+                'batch_metrics': {  # Add default metrics even on error
+                    'api_calls_made': 0,
+                    'api_calls_saved': 0,
+                    'api_calls_reduction_percent': 0,
+                    'cache_hit_rate': 0,
+                    'method_breakdown': {},
+                    'total_captures_processed': 0
             }
+        }
 
 
     def post(self, shared_state: Dict[str, Any], prep_result: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
@@ -185,11 +204,28 @@ class ContentAnalysisNode(BaseNode):
         shared_state['content_analysis'] = exec_result.get('content_analysis', {})
 
         batch_metrics = exec_result.get('batch_metrics', {})
+
         if batch_metrics:
             shared_state['batch_metrics'] = batch_metrics
             self.logger.info(f"🔍 Added batch_metrics to shared_state: {batch_metrics}")
+
+            shared_state.setdefault('pipeline_metadata', {})
+            shared_state['pipeline_metadata']['batch_optimization_metrics'] = batch_metrics
+            self.logger.info(f"🔍 Added batch_metrics to pipeline_metadata")
         else:
             self.logger.warning("⚠️  No batch_metrics found in exec_result")
+            default_batch_metrics = {
+                'api_calls_made': 0,
+                'api_calls_saved': 0,
+                'api_calls_reduction_percent': 0,
+                'cache_hit_rate': 0,
+                'method_breakdown': {},
+                'total_captures_processed': 0,
+                'error': 'batch_metrics_missing_from_exec_result'
+            }
+            shared_state['batch_metrics'] = default_batch_metrics
+            shared_state['pipeline_metadata']['batch_optimization_metrics'] = default_batch_metrics
+
 
         concepts = exec_result.get('extracted_concepts', {})
         processing_summary = {
@@ -202,10 +238,11 @@ class ContentAnalysisNode(BaseNode):
             'llm_provider': prep_result.get('llm_provider', 'unknown')
         }
 
+        api_calls_saved = batch_metrics.get('api_calls_saved', 0)
         shared_state['pipeline_metadata']['content_analysis_summary'] = processing_summary
         shared_state['pipeline_metadata']['content_analysis_end'] = datetime.now(timezone.utc).isoformat()
         
-        self.logger.info(f"Content analysis complete - API calls saved: {batch_metrics['api_calls_saved']}")
+        self.logger.info(f"Content analysis complete - API calls saved: {api_calls_saved}")
         return "default"
 
     
@@ -581,20 +618,56 @@ class ContentAnalysisNode(BaseNode):
         # Calculate batch processing metrics
         processing_methods = [r.get('processing_method', 'unknown') for r in all_results]
         method_breakdown = dict(Counter(processing_methods))
+
+        llm_batch_captures = method_breakdown.get('llm_batch', 0)
+        cached_captures = method_breakdown.get('cached', 0)
+        rule_based_captures = method_breakdown.get('rule_based', 0)
         
-        api_calls_made = method_breakdown.get('llm_batch', 0) + method_breakdown.get('llm_synthesis', 0)
-        api_calls_without_batching = len(all_results)  # What it would have been
-        api_calls_saved = api_calls_without_batching - api_calls_made
+         # Calculate actual API calls
+        if llm_batch_captures > 0:
+            # API calls = number of batches needed for LLM processing
+            api_calls_made = (llm_batch_captures + self.batch_size - 1) // self.batch_size
+        else:
+            api_calls_made = 0
+        
+        # Add synthesis call if we processed any captures with LLM
+        if llm_batch_captures > 0:
+            api_calls_made += 1  # For synthesis call
+        
+        # Calculate what it would have been without batching
+        api_calls_without_batching = llm_batch_captures  # Each capture would need its own call
+        if llm_batch_captures > 0:
+            api_calls_without_batching += 1  # Plus synthesis call
+        
+        # Calculate savings
+        api_calls_saved = max(0, api_calls_without_batching - api_calls_made)
+        
+        # Calculate reduction percentage
+        reduction_percent = 0.0
+        if api_calls_without_batching > 0:
+            reduction_percent = (api_calls_saved / api_calls_without_batching) * 100
+        
+        # Calculate cache hit rate
+        cache_hit_rate = 0.0
+        if len(all_results) > 0:
+            cache_hit_rate = (cached_captures / len(all_results)) * 100
         
         batch_metrics = {
             'api_calls_made': api_calls_made,
             'api_calls_saved': api_calls_saved,
-            'api_calls_reduction_percent': (api_calls_saved / api_calls_without_batching * 100) if api_calls_without_batching > 0 else 0,
-            'cache_hit_rate': (method_breakdown.get('cached', 0) / len(all_results) * 100) if all_results else 0,
+            'api_calls_reduction_percent': reduction_percent,
+            'cache_hit_rate': cache_hit_rate,
             'method_breakdown': method_breakdown,
-            'total_captures_processed': len(all_results)
+            'total_captures_processed': len(all_results),
+            'batch_size_used': self.batch_size,
+            'llm_captures_batched': llm_batch_captures,
+            'batches_created': (llm_batch_captures + self.batch_size - 1) // self.batch_size if llm_batch_captures > 0 else 0,
+            'processing_breakdown': {
+                'llm_batched': llm_batch_captures,
+                'cached': cached_captures,
+                'rule_based': rule_based_captures
+            }
         }
-        
         # Build final extracted_concepts structure
         extracted_concepts = {
             'learning_concepts': unique_concepts,
