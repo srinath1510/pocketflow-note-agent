@@ -20,29 +20,43 @@ from pocketflow import Node as BaseNode
 
 class CaptureIngestionNode(BaseNode):
     """
-    Node 1: Capture Ingestion
+    Updated Capture Ingestion Node
     
-    Purpose: Collect and validate raw browsing data from Chrome extension
+    Purpose: Process minimal capture input and prepare for AI analysis
     
-    Input: Raw capture data from browser extension via shared_state
-    Process: Parse, validate, normalize, and clean capture data
-    Output: Structured raw_captures to shared_state
+    Input: Minimal capture format from shared_state['raw_input']:
+        [
+            {
+                "content": "string",  # Required: The actual content
+                "user_id": "string",  # Required: User identifier
+                "source_url": "string",  # Optional: Source URL
+                "title": "string",  # Optional: Content title
+                "timestamp": "ISO string",  # Optional: When captured
+                "intent": "learn|research|reference|archive",  # Optional: User intent
+                "user_note": "string"  # Optional: User's personal note
+            }
+        ]
+    
+    Process: Clean, normalize, and enrich with AI-ready metadata
+    Output: Structured captures in shared_state['raw_captures']
     """
 
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger(__name__)
 
+        # HTML to text converter for content cleaning
         self.html_converter = html2text.HTML2Text()
         self.html_converter.ignore_links = False
         self.html_converter.ignore_images = True
         self.html_converter.ignore_emphasis = False
         self.html_converter.body_width = 0
 
+        # Simple content classification patterns
         self.content_patterns = {
             'research_paper': [
                 r'abstract\s*:?\s*\n',
-                r'references\s*:?\s*\n',
+                r'references\s*:?\s*\n', 
                 r'doi\s*:?\s*10\.',
                 r'arxiv\.org',
                 r'pubmed\.ncbi\.nlm\.nih\.gov'
@@ -54,389 +68,532 @@ class CaptureIngestionNode(BaseNode):
                 r'docs?\.',
                 r'github\.io'
             ],
-            'blog_post': [
-                r'posted\s+on',
-                r'by\s+.+\s+on',
-                r'comments?\s*\(',
-                r'share\s+this',
-                r'medium\.com',
-                r'dev\.to'
+            'tutorial': [
+                r'step\s+\d+',
+                r'tutorial',
+                r'how\s+to',
+                r'beginner.s+guide'
             ],
-            'news_article': [
-                r'published\s+\d+\s+hours?\s+ago'
+            'educational': [
+                r'learn\s+about',
+                r'introduction\s+to',
+                r'basics?\s+of',
+                r'fundamentals?'
             ]
         }
 
     def prep(self, shared_state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Prepare for capture ingestion by validating input data structure. Namely, if url, content and timestamp is present for each captured note. 
-        
-        Args:
-            shared_state: The shared state dictionary containing raw capture data
-            
-        Returns:
-            Updated shared state with validation results
+        Prepare for capture ingestion by validating minimal input format
         """
-        self.logger.info("Starting Capture Ingestion prep phase")
+        self.logger.info("📥 Preparing Capture Ingestion (Minimal Format)")
         
         shared_state.setdefault('pipeline_metadata', {})
         shared_state['pipeline_metadata']['capture_ingestion_start'] = datetime.now(timezone.utc).isoformat()
 
-        validation_results = {
-            'total_captures': 0,
-            'valid_captures': 0,
-            'invalid_captures': 0,
-            'invalid_details': []
-        }
-        
-        raw_input = shared_state.get('raw_input', {})
+        raw_input = shared_state.get('raw_input', [])
         
         if not raw_input:
             self.logger.error("No raw input data found in shared state")
-            shared_state['pipeline_metadata']['capture_ingestion_error'] = "No raw input data"
-            return {'captures_to_process': [], 'validation_results': {'total_captures': 0, 'valid_captures': 0}}
+            return {'error': 'No raw input data', 'captures_to_process': []}
         
-        required_fields = ['url', 'content', 'timestamp']
-        captures = raw_input if isinstance(raw_input, list) else [raw_input]
+        if not isinstance(raw_input, list):
+            raw_input = [raw_input]
         
         valid_captures = []
-        invalid_captures = []
+        validation_issues = []
         
-        for i, capture in enumerate(captures):
-            missing_fields = [field for field in required_fields if field not in capture]
-            if missing_fields:
-                self.logger.warning(f"Capture {i} missing required fields: {missing_fields}")
-                invalid_captures.append({'index': i, 'missing_fields': missing_fields})
+        for i, capture in enumerate(raw_input):
+            issues = self._validate_minimal_capture(capture, i)
+            if issues:
+                validation_issues.extend(issues)
             else:
                 valid_captures.append(capture)
         
-        validation_results['total_captures'] = len(captures)
-        validation_results['valid_captures'] = len(valid_captures)
-        validation_results['invalid_captures'] = len(invalid_captures)
-        validation_results['invalid_details'] = invalid_captures
-                        
-        self.logger.info(f"Prep complete: {len(valid_captures)} valid captures out of {len(captures)}")
-        return {'captures_to_process': valid_captures, 'validation_results': validation_results}
-    
+        if validation_issues:
+            for issue in validation_issues:
+                self.logger.warning(issue)
+        
+        validation_summary = {
+            'total_input': len(raw_input),
+            'valid_captures': len(valid_captures),
+            'validation_issues': len(validation_issues),
+            'success_rate': len(valid_captures) / len(raw_input) if raw_input else 0
+        }
+        
+        self.logger.info(f"✅ Validation complete: {len(valid_captures)}/{len(raw_input)} captures valid")
+        
+        return {
+            'captures_to_process': valid_captures,
+            'validation_summary': validation_summary,
+            'validation_issues': validation_issues
+        }
 
     def exec(self, prep_result: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Core execution: Process each capture through cleaning, normalization, and metadata extraction.
-        
-        Args:
-            prep_result: Result from prep phase
-            
-        Returns:
-            Processed captures
+        Core execution: Process minimal captures into AI-ready format
         """
-        self.logger.info("Starting Capture Ingestion core execution")
+        if 'error' in prep_result:
+            return prep_result
+            
+        self.logger.info("🔄 Processing minimal captures")
         
         captures_to_process = prep_result.get('captures_to_process', [])
         processed_captures = []
+        processing_errors = []
         
-        for i, raw_capture in enumerate(captures_to_process):
+        for i, minimal_capture in enumerate(captures_to_process):
             try:
                 self.logger.debug(f"Processing capture {i+1}/{len(captures_to_process)}")
-                processed_capture = self._process_single_capture(raw_capture, i)
+                processed_capture = self._process_minimal_capture(minimal_capture, i)
                 processed_captures.append(processed_capture)
                 
             except Exception as e:
-                self.logger.error(f"Error processing capture {i}: {str(e)}")
+                error_msg = f"Error processing capture {i}: {str(e)}"
+                self.logger.error(error_msg)
+                processing_errors.append(error_msg)
                 continue
         
-        self.logger.info(f"Core execution complete: {len(processed_captures)} captures processed")
-        return {'processed_captures': processed_captures, 'validation_results': prep_result['validation_results']}
-
+        processing_summary = {
+            'input_captures': len(captures_to_process),
+            'successfully_processed': len(processed_captures),
+            'processing_errors': len(processing_errors),
+            'success_rate': len(processed_captures) / len(captures_to_process) if captures_to_process else 0
+        }
+        
+        self.logger.info(f"✅ Processing complete: {len(processed_captures)} captures ready for analysis")
+        
+        return {
+            'processed_captures': processed_captures,
+            'processing_summary': processing_summary,
+            'processing_errors': processing_errors,
+            'validation_summary': prep_result['validation_summary']
+        }
 
     def post(self, shared_state: Dict[str, Any], prep_result: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
         """
-        Post-processing: Finalize capture ingestion and prepare for next node.
-        
-        Args:
-            shared_state: The shared state dictionary
-            prep_result: Result from prep phase
-            exec_result: Result from exec phase
-            
-        Returns:
-            Action for next node ("default" for now)
+        Post-processing: Store processed captures and metadata
         """
-        self.logger.info("Starting Capture Ingestion post-execution phase")
+        self.logger.info("📋 Finalizing Capture Ingestion")
+        
+        if 'error' in exec_result:
+            shared_state['capture_ingestion_error'] = exec_result['error']
+            return "error"
         
         processed_captures = exec_result.get('processed_captures', [])
-        validation_results = exec_result.get('validation_results', {})
-
+        
+        # Store processed captures for downstream nodes
         shared_state['raw_captures'] = processed_captures
-
-        processing_summary = {
-            'total_input_captures': validation_results.get('total_captures', 0),
-            'successfully_processed': len(processed_captures),
-            'processing_success_rate': len(processed_captures) / max(validation_results.get('valid_captures', 1), 1),
+        
+        # Create comprehensive summary
+        processing_summary = exec_result.get('processing_summary', {})
+        validation_summary = exec_result.get('validation_summary', {})
+        
+        combined_summary = {
+            # Input statistics
+            'total_input_captures': validation_summary.get('total_input', 0),
+            'valid_input_captures': validation_summary.get('valid_captures', 0),
+            'successfully_processed': processing_summary.get('successfully_processed', 0),
+            'processing_success_rate': processing_summary.get('success_rate', 0),
+            
+            # Content analysis
             'content_types_detected': self._analyze_content_types(processed_captures),
-            'domains_processed': list(set(capture['metadata']['domain'] for capture in processed_captures)) if processed_captures else [],
-            'average_content_length': sum(len(capture['content']) for capture in processed_captures) / max(len(processed_captures), 1) if processed_captures else 0
+            'domains_processed': self._extract_domains(processed_captures),
+            'user_intents': self._analyze_user_intents(processed_captures),
+            'average_content_length': self._calculate_average_content_length(processed_captures),
+            
+            # Metadata
+            'input_format': 'minimal_capture',
+            'bloat_removed': [
+                'browser_fingerprinting', 'viewport_tracking', 'scroll_depth_monitoring',
+                'dwell_time_tracking', 'selection_precision', 'meaningless_metadata'
+            ]
         }
         
-        shared_state['pipeline_metadata']['capture_ingestion_summary'] = processing_summary
+        # Store in pipeline metadata
+        shared_state['pipeline_metadata']['capture_ingestion_summary'] = combined_summary
         shared_state['pipeline_metadata']['capture_ingestion_end'] = datetime.now(timezone.utc).isoformat()
         shared_state['pipeline_metadata']['captures_processed'] = len(processed_captures)
-
-        self.logger.info("Post-execution complete - ready to pass to next node")
+        
+        self.logger.info("✅ Capture Ingestion complete - ready for Content Analysis")
         return "default"
 
-
-    def _process_single_capture(self, raw_capture: Dict[str, Any], index: int) -> Dict[str, Any]:
+    def _validate_minimal_capture(self, capture: Dict[str, Any], index: int) -> List[str]:
         """
-       Helper method: Process a single capture through all transformation steps.
+        Validate a single minimal capture
         
-        Args:
-            raw_capture: Raw capture data from browser extension
-            index: Index of capture in batch
-            
-        Returns:
-            Processed capture with normalized structure
+        Returns list of validation issues (empty if valid)
         """
-        timestamp = self._parse_timestamp(raw_capture.get('timestamp'))
-        capture_id = f"capture_{int(timestamp.timestamp() * 1000)}_{hash(raw_capture['url']) % 1000000:06d}"
+        issues = []
+        
+        # Check required fields
+        if not capture.get('content'):
+            issues.append(f"Capture {index}: Missing or empty 'content' field")
+        elif len(capture['content'].strip()) < 10:
+            issues.append(f"Capture {index}: Content too short (minimum 10 characters)")
+        
+        if not capture.get('user_id'):
+            issues.append(f"Capture {index}: Missing or empty 'user_id' field")
+        elif len(capture['user_id'].strip()) < 2:
+            issues.append(f"Capture {index}: user_id too short")
+        
+        # Validate optional fields if present
+        if 'intent' in capture:
+            valid_intents = ['learn', 'research', 'reference', 'archive']
+            if capture['intent'] not in valid_intents:
+                issues.append(f"Capture {index}: Invalid intent '{capture['intent']}'. Must be one of: {valid_intents}")
+        
+        if 'source_url' in capture and capture['source_url']:
+            if not self._is_valid_url(capture['source_url']):
+                issues.append(f"Capture {index}: Invalid source_url format")
+        
+        return issues
 
-        url_info = self._parse_url(raw_capture['url'])
-
-        cleaned_content = self._clean_html_content(raw_capture['content'])
-        content_metadata = self._extract_content_metadata(raw_capture, cleaned_content)
-        behavior_metadata = self._analyze_user_behavior(raw_capture)
-
+    def _process_minimal_capture(self, minimal_capture: Dict[str, Any], index: int) -> Dict[str, Any]:
+        """
+        Process a single minimal capture into AI-ready format
+        
+        Takes minimal input and enriches it with metadata needed for AI analysis
+        """
+        # Extract core data
+        content = minimal_capture['content'].strip()
+        user_id = minimal_capture['user_id'].strip()
+        source_url = minimal_capture.get('source_url', 'unknown')
+        title = minimal_capture.get('title', 'Untitled')
+        timestamp = minimal_capture.get('timestamp')
+        intent = minimal_capture.get('intent', 'learn')
+        user_note = minimal_capture.get('user_note', '')
+        
+        # Parse and normalize timestamp
+        normalized_timestamp = self._parse_timestamp(timestamp)
+        
+        # Generate capture ID
+        capture_id = self._generate_capture_id(user_id, normalized_timestamp, index)
+        
+        # Clean and process content
+        cleaned_content = self._clean_content(content)
+        
+        # Extract metadata from content and context
+        content_metadata = self._extract_content_metadata(cleaned_content, title, source_url)
+        
+        # Classify content based on patterns and intent
+        content_category = self._classify_content(cleaned_content, title, source_url, intent)
+        
+        # Estimate knowledge level
+        knowledge_level = self._estimate_knowledge_level(cleaned_content, content_metadata)
+        
+        # Create processed capture
         processed_capture = {
+            # Core identification
             'id': capture_id,
-            'url': raw_capture['url'],
+            'user_id': user_id,
+            'session_id': minimal_capture.get('session_id'),  # Added by orchestrator
+            
+            # Content data
             'content': cleaned_content,
-            'highlights': raw_capture.get('highlights', []),
+            'title': title,
+            'url': source_url,
+            
+            # User context
+            'intent': intent,
+            'user_note': user_note,
+            
+            # Metadata for AI analysis
             'metadata': {
-                # Core identification
+                # Core metadata
                 'capture_id': capture_id,
-                'timestamp': timestamp.isoformat(),
-                'timezone': str(timestamp.tzinfo),
-                'annotation_timestamp': datetime.now(timezone.utc).isoformat(),
+                'timestamp': normalized_timestamp.isoformat(),
+                'processing_timestamp': datetime.now(timezone.utc).isoformat(),
                 
-                # Page context
-                'page_title': content_metadata['page_title'],
-                'domain': url_info['domain'],
-                'language': content_metadata.get('language', 'en-US'),
-                'content_type': content_metadata['content_type'],
+                # Content classification
+                'content_category': content_category,
+                'knowledge_level': knowledge_level,
+                'estimated_reading_time': content_metadata['estimated_reading_time'],
                 
-                # Selection details
-                'selected_text': raw_capture.get('selected_text', ''),
+                # Source information
+                'page_title': title,
+                'domain': content_metadata['domain'],
+                'source_type': self._classify_source_type(source_url),
+                
+                # Content structure
                 'word_count': content_metadata['word_count'],
-                'selection_length': len(raw_capture.get('selected_text', '')),
-                'context_before': raw_capture.get('context_before', ''),
-                'context_after': raw_capture.get('context_after', ''),
-                'selection_start_offset': raw_capture.get('selection_start_offset', 0),
-                'selection_end_offset': raw_capture.get('selection_end_offset', 0),
-                'relative_position': raw_capture.get('relative_position', 0.0),
+                'paragraph_count': content_metadata['paragraph_count'],
+                'has_structured_content': content_metadata['has_structured_content'],
                 
-                # Page structure
-                'full_page_word_count': content_metadata['word_count'],
-                'heading_hierarchy': content_metadata['heading_hierarchy'],
-                'link_count': content_metadata['link_count'],
-                'list_items_count': content_metadata['list_items_count'],
-                'table_count': content_metadata['table_count'],
-                'image_count': content_metadata['image_count'],
-                'video_count': content_metadata['video_count'],
+                # Technical content indicators (AI can detect these)
+                'likely_has_code': content_metadata['likely_has_code'],
+                'likely_has_math': content_metadata['likely_has_math'],
+                'likely_technical': content_metadata['likely_technical'],
                 
-                # Content type indicators
-                'has_code': content_metadata['has_code'],
-                'has_math': content_metadata['has_math'],
-                'has_data_tables': content_metadata['has_data_tables'],
-                'external_links': content_metadata['external_links'],
-                'internal_links': content_metadata['internal_links'],
-                'citations': content_metadata['citations'],
-                
-                # User behavior
-                'time_on_page': behavior_metadata['time_on_page'],
-                'scroll_depth_at_selection': behavior_metadata['scroll_depth'],
-                'viewport_size': behavior_metadata['viewport_size'],
-                
-                # Classification
-                'content_category': self._classify_content_type(cleaned_content, raw_capture['url']),
-                'knowledge_level': self._estimate_knowledge_level(cleaned_content),
-                'primary_domain': url_info['domain'],
-                
-                # Technical
-                'browser': raw_capture.get('user_agent', 'Unknown'),
-                'capture_trigger': raw_capture.get('trigger', 'unknown'),
-                'intent': raw_capture.get('intent', 'general')
+                # Processing metadata
+                'input_format': 'minimal_capture',
+                'content_cleaned': True,
+                'ready_for_ai_analysis': True
             }
         }
-
+        
         return processed_capture
 
-    
-    def _parse_timestamp(self, timestamp_str: str) -> datetime:
-        """Helper method: Parse timestamp string into datetime object."""
+    def _parse_timestamp(self, timestamp_input: Optional[str]) -> datetime:
+        """Parse timestamp from various formats"""
+        if not timestamp_input:
+            return datetime.now(timezone.utc)
+        
         try:
-            if isinstance(timestamp_str, (int, float)):
-                return datetime.fromtimestamp(timestamp_str / 1000, tz=timezone.utc)
-            return date_parser.parse(timestamp_str)
+            # Try ISO format first
+            if isinstance(timestamp_input, str):
+                return date_parser.parse(timestamp_input)
+            elif isinstance(timestamp_input, (int, float)):
+                # Handle Unix timestamp (seconds or milliseconds)
+                if timestamp_input > 1e12:  # Milliseconds
+                    timestamp_input = timestamp_input / 1000
+                return datetime.fromtimestamp(timestamp_input, tz=timezone.utc)
+            else:
+                return datetime.now(timezone.utc)
         except Exception:
+            self.logger.warning(f"Could not parse timestamp: {timestamp_input}")
             return datetime.now(timezone.utc)
 
+    def _generate_capture_id(self, user_id: str, timestamp: datetime, index: int) -> str:
+        """Generate unique capture ID"""
+        timestamp_ms = int(timestamp.timestamp() * 1000)
+        return f"{user_id}_{timestamp_ms}_{index:03d}"
 
-    def _parse_url(self, url: str) -> Dict[str, str]:
-        """Helper method: Extract domain and URL components."""
+    def _clean_content(self, content: str) -> str:
+        """Clean content for AI analysis"""
         try:
-            parsed = urlparse(url)
-            return {
-                'domain': parsed.netloc.lower(),
-                'scheme': parsed.scheme,
-                'path': parsed.path,
-                'query': parsed.query,
-                'fragment': parsed.fragment
-            }
-        except Exception:
-            return {'domain': 'unknown', 'scheme': '', 'path': '', 'query': '', 'fragment': ''}
-
-    
-    def _clean_html_content(self, html_content: str) -> str:
-        """Helper method: Clean HTML and convert to readable text."""
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
+            # Check if content contains HTML
+            if '<' in content and '>' in content:
+                # Use BeautifulSoup to clean HTML
+                soup = BeautifulSoup(content, 'html.parser')
+                
+                # Remove unwanted elements
+                for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+                    element.decompose()
+                
+                # Convert to clean text
+                cleaned = self.html_converter.handle(str(soup))
+            else:
+                # Plain text content
+                cleaned = content
             
-            for script in soup(["script", "style", "nav", "header", "footer", "aside"]):
-                script.decompose()
+            # Clean up whitespace and formatting
+            cleaned = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned)  # Multiple newlines to double
+            cleaned = re.sub(r'[ \t]+', ' ', cleaned)  # Multiple spaces to single
+            cleaned = cleaned.strip()
             
-            text_content = self.html_converter.handle(str(soup))
-            
-            text_content = re.sub(r'\n\s*\n\s*\n', '\n\n', text_content)
-            text_content = re.sub(r'[ \t]+', ' ', text_content)
-            
-            return text_content.strip()
+            return cleaned
             
         except Exception as e:
-            self.logger.warning(f"Error cleaning HTML content: {str(e)}")
-            return html_content
-    
+            self.logger.warning(f"Content cleaning failed: {e}")
+            return content.strip()
 
-    def _extract_content_metadata(self, raw_capture: Dict[str, Any], cleaned_content: str) -> Dict[str, Any]:
-        """Helper method: Extract metadata from page content."""
-        try:
-            soup = BeautifulSoup(raw_capture['content'], 'html.parser')
-            
-            title_tag = soup.find('title')
-            page_title = title_tag.get_text().strip() if title_tag else 'Untitled'
-            
-            headings = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
-            heading_hierarchy = []
-            for heading in headings:
-                heading_hierarchy.append({
-                    'level': int(heading.name[1]),
-                    'text': heading.get_text().strip()[:100],
-                    'id': heading.get('id', '')
-                })
-            
-            links = soup.find_all('a', href=True)
-            external_links = sum(1 for link in links if self._is_external_link(link['href'], raw_capture['url']))
-            internal_links = len(links) - external_links
-            
-            has_code = bool(soup.find(['code', 'pre']) or re.search(r'```|`[^`]+`', cleaned_content))
-            has_math = bool(re.search(r'\$[^$]+\$|\\\([^)]+\\\)|\\\[[^]]+\\\]', cleaned_content))
-            has_data_tables = len(soup.find_all('table')) > 0
-            
-            citations = len(re.findall(r'\[[0-9]+\]|\([A-Za-z]+\s+et\s+al\.?,?\s+[0-9]{4}\)', cleaned_content))
-            
-            return {
-                'page_title': page_title,
-                'content_type': raw_capture.get('content_type', 'text/html'),
-                'word_count': len(cleaned_content.split()),
-                'heading_hierarchy': heading_hierarchy,
-                'link_count': len(links),
-                'list_items_count': len(soup.find_all(['li'])),
-                'table_count': len(soup.find_all('table')),
-                'image_count': len(soup.find_all('img')),
-                'video_count': len(soup.find_all(['video', 'iframe'])),
-                'has_code': has_code,
-                'has_math': has_math,
-                'has_data_tables': has_data_tables,
-                'external_links': external_links,
-                'internal_links': internal_links,
-                'citations': citations
-            }
-            
-        except Exception as e:
-            self.logger.warning(f"Error extracting content metadata: {str(e)}")
-            return {
-                'page_title': 'Unknown',
-                'content_type': 'text/html',
-                'word_count': len(cleaned_content.split()),
-                'heading_hierarchy': [],
-                'link_count': 0,
-                'list_items_count': 0,
-                'table_count': 0,
-                'image_count': 0,
-                'video_count': 0,
-                'has_code': False,
-                'has_math': False,
-                'has_data_tables': False,
-                'external_links': 0,
-                'internal_links': 0,
-                'citations': 0
-            }
-
-    def _analyze_user_behavior(self, raw_capture: Dict[str, Any]) -> Dict[str, Any]:
-        """Helper method: Analyze user behavior patterns from capture data."""
+    def _extract_content_metadata(self, content: str, title: str, source_url: str) -> Dict[str, Any]:
+        """Extract metadata from content for AI analysis"""
+        
+        words = content.split()
+        word_count = len(words)
+        paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
+        
+        # Estimate reading time (average 200 words per minute)
+        reading_time_minutes = max(1, word_count / 200)
+        
+        # Extract domain
+        domain = self._extract_domain(source_url)
+        
+        # Analyze content structure
+        has_structured_content = self._has_structured_content(content)
+        
+        # Simple technical content detection
+        likely_has_code = self._likely_contains_code(content)
+        likely_has_math = self._likely_contains_math(content)
+        likely_technical = self._likely_technical_content(content, domain)
+        
         return {
-            'time_on_page': raw_capture.get('dwell_time', raw_capture.get('time_on_page', 0)),
-            'scroll_depth': raw_capture.get('scroll_depth_at_selection', raw_capture.get('scroll_depth', 0)),
-            'viewport_size': raw_capture.get('viewport_size', 'unknown')
+            'word_count': word_count,
+            'paragraph_count': len(paragraphs),
+            'estimated_reading_time': reading_time_minutes,
+            'domain': domain,
+            'has_structured_content': has_structured_content,
+            'likely_has_code': likely_has_code,
+            'likely_has_math': likely_has_math,
+            'likely_technical': likely_technical
         }
 
-    def _is_external_link(self, href: str, base_url: str) -> bool:
-        """Helper method: Check if a link is external to the current domain."""
-        try:
-            base_domain = urlparse(base_url).netloc.lower()
-            link_domain = urlparse(href).netloc.lower()
-            return link_domain and link_domain != base_domain
-        except Exception:
-            return False
+    def _classify_content(self, content: str, title: str, source_url: str, intent: str) -> str:
+        """Classify content based on patterns and context"""
+        
+        # Use intent as primary signal
+        if intent in ['research', 'reference']:
+            # Check for research patterns
+            if self._matches_patterns(content + ' ' + title, self.content_patterns['research_paper']):
+                return 'research_paper'
+            elif self._matches_patterns(content + ' ' + title, self.content_patterns['documentation']):
+                return 'documentation'
+            else:
+                return 'reference_material'
+        
+        elif intent == 'learn':
+            # Educational content
+            if self._matches_patterns(content + ' ' + title, self.content_patterns['tutorial']):
+                return 'tutorial'
+            elif self._matches_patterns(content + ' ' + title, self.content_patterns['educational']):
+                return 'educational'
+            else:
+                return 'learning_material'
+        
+        else:
+            # Default classification based on content patterns
+            for category, patterns in self.content_patterns.items():
+                if self._matches_patterns(content + ' ' + title, patterns):
+                    return category
             
+            return 'general'
 
-    def _classify_content_type(self, content: str, url: str) -> str:
-        """Helper method: Classify content type based on patterns."""
-        # Definitely needs refinement
-        content_lower = content.lower()
-        url_lower = url.lower()
+    def _estimate_knowledge_level(self, content: str, metadata: Dict[str, Any]) -> str:
+        """Estimate required knowledge level"""
         
-        for content_type, patterns in self.content_patterns.items():
-            for pattern in patterns:
-                if re.search(pattern, content_lower) or re.search(pattern, url_lower):
-                    return content_type
+        word_count = metadata['word_count']
+        likely_technical = metadata['likely_technical']
         
-        return 'general'
-
-
-    def _estimate_knowledge_level(self, content: str) -> str:
-        """Helper method: Estimate knowledge level required for content."""
-        # Simple heuristic based on vocabulary complexity -- needs refinement
-        word_count = len(content.split())
-        if word_count < 100:
-            return 'basic'
-        
-        # Count technical terms, jargon, complex sentences
-        technical_indicators = len(re.findall(r'\b[A-Z]{2,}\b|\b\w{10,}\b', content))
-        technical_ratio = technical_indicators / max(word_count, 1)
-        
-        if technical_ratio > 0.05:
+        # Simple heuristics
+        if likely_technical and word_count > 1000:
             return 'advanced'
-        elif technical_ratio > 0.02:
+        elif likely_technical or word_count > 500:
             return 'intermediate'
         else:
             return 'basic'
 
+    # Helper methods
+    def _is_valid_url(self, url: str) -> bool:
+        """Check if URL is valid"""
+        try:
+            return validators.url(url) or url in ['unknown', '']
+        except Exception:
+            return False
 
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL"""
+        if not url or url == 'unknown':
+            return 'unknown'
+        try:
+            return urlparse(url).netloc.lower()
+        except Exception:
+            return 'unknown'
+
+    def _classify_source_type(self, url: str) -> str:
+        """Classify source type based on URL"""
+        if not url or url == 'unknown':
+            return 'unknown'
+        
+        domain = self._extract_domain(url).lower()
+        
+        # Academic sources
+        if domain.endswith('.edu') or 'arxiv' in domain or 'pubmed' in domain:
+            return 'academic'
+        
+        # Documentation sites
+        if any(term in domain for term in ['docs', 'documentation', 'github.io']):
+            return 'documentation'
+        
+        # News sites
+        if any(term in domain for term in ['news', 'times', 'post', 'guardian', 'reuters', 'cnn', 'bbc']):
+            return 'news'
+        
+        # Blog platforms
+        if any(term in domain for term in ['medium.com', 'dev.to', 'blog', 'wordpress']):
+            return 'blog'
+        
+        return 'website'
+
+    def _matches_patterns(self, text: str, patterns: List[str]) -> bool:
+        """Check if text matches any of the given patterns"""
+        text_lower = text.lower()
+        return any(re.search(pattern, text_lower) for pattern in patterns)
+
+    def _has_structured_content(self, content: str) -> bool:
+        """Check if content has structured elements"""
+        structure_indicators = [
+            r'^#+\s',  # Markdown headers
+            r'^\d+\.',  # Numbered lists
+            r'^[•\-\*]\s',  # Bullet points
+            r'\n\s*\n',  # Paragraph breaks
+        ]
+        return any(re.search(pattern, content, re.MULTILINE) for pattern in structure_indicators)
+
+    def _likely_contains_code(self, content: str) -> bool:
+        """Simple heuristic to detect code content"""
+        code_indicators = [
+            r'```',  # Code blocks
+            r'def\s+\w+\(',  # Python functions
+            r'function\s+\w+\(',  # JavaScript functions
+            r'import\s+\w+',  # Import statements
+            r'#include\s*<',  # C/C++ includes
+            r'<[a-zA-Z]+[^>]*>',  # HTML tags
+        ]
+        return any(re.search(pattern, content) for pattern in code_indicators)
+
+    def _likely_contains_math(self, content: str) -> bool:
+        """Simple heuristic to detect mathematical content"""
+        math_indicators = [
+            r'\$[^$]+\,  # LaTeX math
+            r'\\[a-zA-Z]+\{',  # LaTeX commands
+            r'\b(?:equation|theorem|proof|lemma)\b',  # Math terms
+            r'[∀∃∈∉∪∩⊂⊃∑∏∫]',  # Math symbols
+        ]
+        return any(re.search(pattern, content, re.IGNORECASE) for pattern in math_indicators)
+
+    def _likely_technical_content(self, content: str, domain: str) -> bool:
+        """Determine if content is likely technical"""
+        
+        # Technical domains
+        technical_domains = ['github.com', 'stackoverflow.com', 'docs.', 'api.', 'developer.']
+        if any(tech_domain in domain for tech_domain in technical_domains):
+            return True
+        
+        # Technical vocabulary density
+        technical_terms = len(re.findall(r'\b[A-Z]{2,}\b|\b\w{10,}\b', content))
+        word_count = len(content.split())
+        
+        if word_count > 0:
+            technical_ratio = technical_terms / word_count
+            return technical_ratio > 0.02  # More than 2% technical terms
+        
+        return False
+
+    # Summary analysis methods
     def _analyze_content_types(self, processed_captures: List[Dict[str, Any]]) -> Dict[str, int]:
-        """Distribution of content types in processed captures."""
+        """Analyze distribution of content types"""
         content_types = {}
         for capture in processed_captures:
             content_type = capture['metadata']['content_category']
             content_types[content_type] = content_types.get(content_type, 0) + 1
         return content_types
+
+    def _extract_domains(self, processed_captures: List[Dict[str, Any]]) -> List[str]:
+        """Extract unique domains from processed captures"""
+        domains = set()
+        for capture in processed_captures:
+            domain = capture['metadata']['domain']
+            if domain != 'unknown':
+                domains.add(domain)
+        return list(domains)
+
+    def _analyze_user_intents(self, processed_captures: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Analyze distribution of user intents"""
+        intents = {}
+        for capture in processed_captures:
+            intent = capture['intent']
+            intents[intent] = intents.get(intent, 0) + 1
+        return intents
+
+    def _calculate_average_content_length(self, processed_captures: List[Dict[str, Any]]) -> float:
+        """Calculate average content length"""
+        if not processed_captures:
+            return 0.0
+        
+        total_words = sum(capture['metadata']['word_count'] for capture in processed_captures)
+        return total_words / len(processed_captures)
 
         
 
