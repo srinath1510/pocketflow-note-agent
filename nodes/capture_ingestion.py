@@ -536,7 +536,7 @@ class CaptureIngestionNode(BaseNode):
     def _likely_contains_math(self, content: str) -> bool:
         """Simple heuristic to detect mathematical content"""
         math_indicators = [
-            r'\$[^$]+\,  # LaTeX math
+            r'\$[^$]+\$',  # LaTeX math
             r'\\[a-zA-Z]+\{',  # LaTeX commands
             r'\b(?:equation|theorem|proof|lemma)\b',  # Math terms
             r'[∀∃∈∉∪∩⊂⊃∑∏∫]',  # Math symbols
