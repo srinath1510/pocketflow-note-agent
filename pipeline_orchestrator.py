@@ -83,44 +83,78 @@ class PipelineOrchestrator:
             Notes in pipeline format
         """
         self.logger.info(f"Converting {len(session_notes)} notes to pipeline format")
+
+        # debug log
+        if session_notes:
+            self.logger.info(f"Sample note structure: {json.dumps(session_notes[0], indent=2)}")
         
         pipeline_captures = []
         
         for i, note in enumerate(session_notes):
             try:
-                raw_note = note.get('raw_note', {})
+                source = note.get('source', {})
+                metadata = note.get('metadata', {})
                 
                 pipeline_capture = {
-                    # Required fields for CaptureIngestionNode
-                    'url': note.get('url') or raw_note.get('source', {}).get('url', ''),
-                    'content': note.get('content_full') or raw_note.get('content', ''),
-                    'timestamp': note.get('captured_at') or raw_note.get('metadata', {}).get('captured_at', datetime.now(timezone.utc).isoformat()),
-                    
-                    'selected_text': raw_note.get('metadata', {}).get('selected_text', ''),
-                    'highlights': raw_note.get('highlights', []),
-                    'context_before': raw_note.get('metadata', {}).get('context_before', ''),
-                    'context_after': raw_note.get('metadata', {}).get('context_after', ''),
-                    'dwell_time': raw_note.get('metadata', {}).get('time_on_page', 0),
-                    'scroll_depth': raw_note.get('metadata', {}).get('scroll_depth_at_selection', 0),
-                    'viewport_size': raw_note.get('metadata', {}).get('viewport_size', 'unknown'),
-                    'user_agent': raw_note.get('metadata', {}).get('browser', 'Unknown'),
-                    'trigger': raw_note.get('metadata', {}).get('capture_trigger', 'extension'),
-                    'intent': raw_note.get('metadata', {}).get('intent', 'general'),
-                    
-                    'selection_start_offset': raw_note.get('metadata', {}).get('selection_start_offset', 0),
-                    'selection_end_offset': raw_note.get('metadata', {}).get('selection_end_offset', 0),
-                    'relative_position': raw_note.get('metadata', {}).get('relative_position', 0.0),
-                    
-                    # Additional metadata for pipeline
-                    'api_note_id': note.get('id'),
-                    'api_stored_at': note.get('stored_at'),
-                    'bake_id': bake_data.get('bake_id')
+                # Required fields for CaptureIngestionNode
+                'url': source.get('url', ''),
+                'content': note.get('content', ''),  # Main content field
+                'timestamp': source.get('timestamp') or metadata.get('timestamp') or datetime.now(timezone.utc).isoformat(),
+                
+                # Selection and context data
+                'selected_text': metadata.get('selected_text', note.get('content', '')),
+                'highlights': [],  # Not present in your data structure
+                'context_before': metadata.get('context_before', ''),
+                'context_after': metadata.get('context_after', ''),
+                
+                # Interaction metadata
+                'dwell_time': metadata.get('time_on_page', 0),
+                'scroll_depth': metadata.get('scroll_depth_at_selection', 0),
+                'viewport_size': metadata.get('viewport_size', 'unknown'),
+                'user_agent': metadata.get('browser', 'Unknown'),
+                'trigger': metadata.get('capture_trigger', 'extension'),
+                'intent': metadata.get('intent', 'general'),
+                
+                # Position metadata
+                'selection_start_offset': metadata.get('selection_start_offset', 0),
+                'selection_end_offset': metadata.get('selection_end_offset', 0),
+                'relative_position': metadata.get('relative_position', 0.0),
+                
+                # Content analysis metadata
+                'word_count': metadata.get('wordCount', 0),
+                'selection_length': metadata.get('selectionLength', 0),
+                'page_title': source.get('title') or metadata.get('pageTitle', ''),
+                'domain': metadata.get('domain', ''),
+                'content_type': metadata.get('contentType', 'text/html'),
+                'language': metadata.get('language', 'unknown'),
+                
+                # Technical metadata
+                'has_code': metadata.get('has_code', False),
+                'has_math': metadata.get('has_math', False),
+                'has_data_tables': metadata.get('has_data_tables', False),
+                'link_count': metadata.get('linkCount', 0),
+                'image_count': metadata.get('image_count', 0),
+                'video_count': metadata.get('video_count', 0),
+                
+                # API tracking metadata
+                'api_note_id': note.get('id'),
+                'api_stored_at': note.get('stored_at'),
+                'note_type': note.get('type', 'selection'),
+                'tag': note.get('tag', ''),
+                'sync_status': note.get('sync_status', 'pending'),
+                'bake_id': bake_data.get('bake_id'),
+                
+                # Additional context
+                'capture_id': metadata.get('capture_id'),
+                'local_id': metadata.get('local_id'),
+                'batch_pending': metadata.get('batch_pending', False)
                 }
                 
                 pipeline_captures.append(pipeline_capture)
+                self.logger.debug(f"Converted note {i+1}/{len(session_notes)}: {pipeline_capture.get('url', 'no-url')}")
                 
             except Exception as e:
-                self.logger.warning(f"Error converting note {i}: {str(e)}. Skipping note.")
+                self.logger.warning(f"Error converting note {i}: {str(e)}. Note data: {json.dumps(note, indent=2)}")
                 continue
         
         self.logger.info(f"Successfully converted {len(pipeline_captures)} notes to pipeline format")
@@ -238,7 +272,34 @@ class PipelineOrchestrator:
         kg_summary = pipeline_metadata.get('knowledge_graph_summary', {})
         historical_summary = pipeline_metadata.get('historical_analysis_summary', {})
         notion_summary = pipeline_metadata.get('notion_generation_summary', {})
+
+        batch_metrics = None
         
+        if 'batch_metrics' in shared_state:
+            batch_metrics = shared_state['batch_metrics']
+            self.logger.info(f"🔍 Found batch_metrics in shared_state: {batch_metrics}")
+    
+        # Check content_analysis_summary
+        elif content_summary.get('batch_optimization_metrics'):
+            batch_metrics = content_summary['batch_optimization_metrics']
+            self.logger.info(f"🔍 Found batch_metrics in content_analysis_summary: {batch_metrics}")
+    
+        # Check content_analysis directly
+        elif shared_state.get('content_analysis', {}).get('optimization_metrics'):
+            batch_metrics = shared_state['content_analysis']['optimization_metrics']
+            self.logger.info(f"🔍 Found batch_metrics in content_analysis: {batch_metrics}")
+    
+        # Create default empty metrics if not found
+        if not batch_metrics:
+            self.logger.warning("⚠️  No batch metrics found - creating empty metrics")
+            batch_metrics = {
+                'api_calls_made': 0,
+                'api_calls_saved': 0,
+                'api_calls_reduction_percent': 0,
+                'cache_hit_rate': 0,
+                'method_breakdown': {},
+                'total_captures_processed': len(raw_captures)
+            }
         
         stats = {
             'total_input_captures': capture_summary.get('total_input_captures', 0),
@@ -257,6 +318,8 @@ class PipelineOrchestrator:
             'session_theme': content_summary.get('session_theme', 'unknown'),
             'llm_provider': content_summary.get('llm_provider', 'unknown'),
 
+            'batch_optimization_metrics': batch_metrics,
+
             # Knowledge graph stats
             'knowledge_graph_nodes_created': kg_summary.get('total_nodes_created', 0),
             'knowledge_graph_relationships': kg_summary.get('total_relationships', 0),
@@ -266,7 +329,7 @@ class PipelineOrchestrator:
             'historical_connections_found': historical_summary.get('connections_found', 0),
             'knowledge_gaps_identified': historical_summary.get('knowledge_gaps_identified', 0),
             'reinforcement_opportunities_found': historical_summary.get('reinforcement_opportunities', 0),
-            'learning_patterns_detected': historical_summary.get('learning_patterns_detected', 0)
+            'learning_patterns_detected': historical_summary.get('learning_patterns_detected', 0),
 
             # Notion generation stats
             'notion_pages_created': notion_summary.get('total_pages_created', 0),

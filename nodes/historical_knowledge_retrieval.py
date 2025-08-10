@@ -427,6 +427,9 @@ Focus on genuine gaps that would improve understanding. Maximum 5 gaps."""
                     }
                     gaps.append(processed_gap)
                     
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"JSON parsing failed for domain gap analysis: {str(e)}")
+            self.logger.warning(f"Response was: {response_text}")
         except Exception as e:
             self.logger.warning(f"Domain gap analysis failed: {str(e)}")
         
