@@ -190,17 +190,81 @@ def receive_batch():
     """Receive a batch of notes from the extension"""
     try:
         logger.info("=== BATCH PROCESSING REQUEST ===")
-        
+
+        if not request.is_json:
+            return jsonify({
+                "success": False,
+                "error": "Request must be JSON",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }), 400
+                
         data = request.get_json()
-        logger.info(f"Received data: {data}")
         
         if not data:
             logger.error("No JSON data provided")
-            return jsonify({"error": "No JSON data provided"}), 400
+            return jsonify({
+                "success": False,
+                "error": "No JSON data provided",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }), 400
             
         if 'notes' not in data:
             logger.error("No notes in batch")
-            return jsonify({"error": "No notes in batch"}), 400
+            return jsonify({
+                "success": False,
+                "error": "No 'notes' field in request",
+                "expected_format": {
+                    "notes": [
+                        {
+                            "content": "required",
+                            "user_id": "required",
+                            "source_url": "optional",
+                            "title": "optional"
+                        }
+                    ]
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }), 400
+
+        notes = data['notes']
+
+        # Validate notes format
+        if not isinstance(notes, list):
+            return jsonify({
+                "success": False,
+                "error": "'notes' must be an array",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }), 400
+        
+        if len(notes) == 0:
+            return jsonify({
+                "success": False,
+                "error": "Notes array cannot be empty",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }), 400
+        
+        # Validate each note has required fields
+        for i, note in enumerate(notes):
+            if not isinstance(note, dict):
+                return jsonify({
+                    "success": False,
+                    "error": f"Note {i} must be an object",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }), 400
+            
+            if not note.get('content'):
+                return jsonify({
+                    "success": False,
+                    "error": f"Note {i} missing required 'content' field",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }), 400
+            
+            if not note.get('user_id'):
+                return jsonify({
+                    "success": False,
+                    "error": f"Note {i} missing required 'user_id' field",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }), 400
         
         batch_id = data.get('batch_id', str(uuid.uuid4()))
 
@@ -213,8 +277,6 @@ def receive_batch():
                 "message": "Batch already processed",
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }), 200
-
-        notes = data['notes']
         
         logger.info(f"Processing batch {batch_id} with {len(notes)} notes")
 
@@ -297,7 +359,8 @@ def receive_batch():
         logger.error(traceback.format_exc())
         return jsonify({
             "success": False,
-            "error": f"Error processing batch: {str(e)}",
+            "error": f"Internal server error: {str(e)}",
+            "error_type": type(e).__name__,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), 500
 
@@ -458,72 +521,54 @@ def get_results():
         bake_id = request.args.get('bake_id')
         
         if bake_id:
-            # Look for specific bake result in memory first
+            # Look for specific bake result
             for result in processing_results:
                 if result.get('bake_id') == bake_id:
-                    serialized_result = serialize_for_json(result)
-                    return jsonify({
-                        "result": serialized_result,
-                        "found": True,
-                        "source": "memory",
-                        "bake_id": bake_id,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    })
+                    formatted_result = {
+                        'bake_id': bake_id,
+                        'status': result.get('status', 'unknown'),
+                        'found': True,
+                        'source': 'memory',
+                        
+                        'key_metrics': {
+                            'captures_processed': result.get('processing_summary', {}).get('captures_processed', 0),
+                            'concepts_extracted': result.get('processing_summary', {}).get('concepts_extracted', 0),
+                            'api_calls_saved': result.get('batch_optimization', {}).get('api_calls_saved', 0),
+                            'processing_time_seconds': result.get('processing_summary', {}).get('processing_time_seconds', 0),
+                            'session_theme': result.get('processing_summary', {}).get('session_theme', 'general')
+                        },
+                        
+                        'result': result,
+                        'timestamp': datetime.now(timezone.utc).isoformat()
+                    }
+                    
+                    return jsonify(formatted_result)
             
-            # If not found in memory, try to load from file
-            result_file = RESULTS_DIR / f"bake_{bake_id}_pipeline_result.json"
-            if result_file.exists():
-                try:
-                    with open(result_file, 'r') as f:
-                        file_result = json.load(f)
-                    return jsonify({
-                        "result": file_result,
-                        "found": True,
-                        "source": "file",
-                        "bake_id": bake_id,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    })
-                except Exception as file_error:
-                    logger.warning(f"Error reading result file: {file_error}")
-            
-            # Try summary file as fallback
-            summary_file = RESULTS_DIR / f"bake_{bake_id}_summary.json"
-            if summary_file.exists():
-                try:
-                    with open(summary_file, 'r') as f:
-                        summary_result = json.load(f)
-                    return jsonify({
-                        "result": summary_result,
-                        "found": True,
-                        "source": "summary_file",
-                        "bake_id": bake_id,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    })
-                except Exception as summary_error:
-                    logger.warning(f"Error reading summary file: {summary_error}")
-            
-            # Not found anywhere
             return jsonify({
                 "result": None,
                 "found": False,
                 "bake_id": bake_id,
                 "message": f"No results found for bake_id: {bake_id}",
-                "searched_locations": ["memory", "pipeline_result_file", "summary_file"],
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }), 404
         
         else:
-            # Return all results
-            serialized_results = serialize_for_json(processing_results)
+            total_captures = sum(r.get('processing_summary', {}).get('captures_processed', 0) for r in processing_results)
+            total_api_calls_saved = sum(r.get('batch_optimization', {}).get('api_calls_saved', 0) for r in processing_results)
+            
             return jsonify({
-                "results": serialized_results,
-                "total_results": len(processing_results),
+                "results": processing_results,
+                "summary": {
+                    "total_results": len(processing_results),
+                    "total_captures_processed": total_captures,
+                    "total_api_calls_saved": total_api_calls_saved,
+                    "successful_bakes": len([r for r in processing_results if r.get('status') == 'completed'])
+                },
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
             
     except Exception as e:
         logger.error(f"Error retrieving results: {str(e)}")
-        logger.error(traceback.format_exc())
         return jsonify({"error": f"Error retrieving results: {str(e)}"}), 500
 
 
@@ -665,110 +710,144 @@ def process_batch_background(batch_id, notes):
         logger.error(f"Error processing batch {batch_id}: {str(e)}")
         logger.error(traceback.format_exc())
 
+
 def process_bake_background(bake_data):
     """Background processing of bake request"""
     bake_id = bake_data['bake_id']
     
-    # CRITICAL DEBUG PRINTS
     print(f"\n🎬 === BACKGROUND THREAD EXECUTING for {bake_id} ===")
     print(f"📊 Notes in storage: {len(notes_storage)}")
-    print(f"📊 Current processing_results count BEFORE: {len(processing_results)}")
-    print(f"🤖 Pipeline orchestrator available: {pipeline_orchestrator is not None}")
     
     logger.info(f"Processing bake {bake_id} in background")
     
-    # small delay to ensure all batch notes are stored
-    time.sleep(1)
     try:
         if not pipeline_orchestrator:
-            print(f"❌ Pipeline orchestrator not available for {bake_id}")
             raise Exception("Pipeline orchestrator not available")
         
         session_notes = notes_storage.copy()
         print(f"📋 Running pipeline on {len(session_notes)} notes for bake {bake_id}")
         
-        logger.info(f"Running pipeline on {len(session_notes)} notes for bake {bake_id}")
-        logger.info(f"Sample note structure: {json.dumps(session_notes[0] if session_notes else {}, indent=2)}")
-
-        print(f"🚀 CALLING pipeline_orchestrator.run_pipeline...")
-        pipeline_results = pipeline_orchestrator.run_pipeline(bake_data, session_notes)
-        print(f"✅ PIPELINE COMPLETED. Result keys: {list(pipeline_results.keys())}")
-
-        # CRITICAL: Add results to processing_results list
-        print(f"📊 Current processing_results count BEFORE append: {len(processing_results)}")
-        processing_results.append(pipeline_results)
-        print(f"📊 Current processing_results count AFTER append: {len(processing_results)}")
-        print(f"✅ RESULT ADDED TO MEMORY for bake {bake_id}")
+        try:
+            pipeline_results = pipeline_orchestrator.run_pipeline(session_notes, bake_data)
+            print(f"✅ PIPELINE COMPLETED. Result keys: {list(pipeline_results.keys())}")
+        except Exception as pipeline_error:
+            logger.error(f"Pipeline execution failed for {bake_id}: {str(pipeline_error)}")
+            raise pipeline_error
         
-        # Check for batch metrics in the result
-        processing_summary = pipeline_results.get('processing_summary', {})
-        batch_metrics = processing_summary.get('batch_optimization_metrics', {})
-        if batch_metrics:
-            api_calls_saved = batch_metrics.get('api_calls_saved', 0)
-            print(f"🎉 BATCH METRICS FOUND: {api_calls_saved} API calls saved!")
+
+        try:
+            api_response = {
+                'bake_id': bake_id,
+                'status': pipeline_results.get('status', 'completed'),
+                'processed_at': pipeline_results.get('processed_at', datetime.now(timezone.utc).isoformat()),
+                'input_notes_count': len(session_notes),
+                
+                'batch_optimization': pipeline_results.get('batch_optimization', {}),
+                
+                # Summary stats with safe defaults
+                'processing_summary': {
+                    'captures_processed': pipeline_results.get('summary', {}).get('captures_processed', len(session_notes)),
+                    'concepts_extracted': pipeline_results.get('summary', {}).get('concepts_extracted', 0),
+                    'api_calls_saved': pipeline_results.get('batch_optimization', {}).get('api_calls_saved', 0),
+                    'processing_time_seconds': pipeline_results.get('processing_time', 0),
+                    'session_theme': pipeline_results.get('learning_analysis', {}).get('session_theme', 'general')
+                },
+                
+                # Learning insights with safe defaults
+                'insights': pipeline_results.get('learning_analysis', {}),
+                'knowledge_insights': pipeline_results.get('knowledge_insights', {}),
+                'outputs': pipeline_results.get('outputs', {}),
+                
+                # Full pipeline results for detailed analysis
+                'detailed_results': pipeline_results,
+                
+                # Pipeline metadata
+                'pipeline_metadata': {
+                    'pipeline_version': pipeline_results.get('metadata', {}).get('pipeline_version', '1.1.0'),
+                    'nodes_executed': pipeline_results.get('metadata', {}).get('nodes_executed', 0),
+                    'input_format': 'minimal_capture'
+                }
+            }
+        except Exception as format_error:
+            logger.error(f"Result formatting failed for {bake_id}: {str(format_error)}")
+            # Create minimal valid response
+            api_response = {
+                'bake_id': bake_id,
+                'status': 'completed_with_formatting_issues',
+                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'input_notes_count': len(session_notes),
+                'batch_optimization': {},
+                'processing_summary': {
+                    'captures_processed': len(session_notes),
+                    'concepts_extracted': 0,
+                    'api_calls_saved': 0,
+                    'processing_time_seconds': 0,
+                    'session_theme': 'general'
+                },
+                'error': f'Formatting error: {str(format_error)}',
+                'raw_pipeline_results': pipeline_results
+            }
+        
+        processing_results.append(api_response)
+        print(f"✅ FORMATTED RESULT ADDED TO MEMORY for bake {bake_id}")
+        
+        batch_metrics = api_response.get('batch_optimization', {})
+        api_calls_saved = batch_metrics.get('api_calls_saved', 0)
+
+        if api_calls_saved > 0:
+            print(f"🎉 BATCH OPTIMIZATION SUCCESS: {api_calls_saved} API calls saved!")
             logger.info(f"Batch optimization successful: {api_calls_saved} API calls saved")
         else:
-            print(f"⚠️  No batch metrics found in processing_summary")
-            # Check other locations
-            if 'batch_metrics' in pipeline_results:
-                print(f"🔍 Found batch_metrics in root: {pipeline_results['batch_metrics']}")
-            if 'shared_state' in pipeline_results and 'batch_metrics' in pipeline_results['shared_state']:
-                print(f"🔍 Found batch_metrics in shared_state: {pipeline_results['shared_state']['batch_metrics']}")
+            print(f"⚠️  No batch optimization detected (this might be expected for small batches)")
+            logger.info(f"No batch optimization detected for bake {bake_id}")
 
-        # Save to files
-        result_file = RESULTS_DIR / f"bake_{bake_id}_pipeline_result.json"
-        with open(result_file, 'w') as f:
-            json.dump(pipeline_results, f, indent=2, default=str)
+        try:
+            result_file = RESULTS_DIR / f"bake_{bake_id}_pipeline_result.json"
+            with open(result_file, 'w') as f:
+                json.dump(api_response, f, indent=2, default=str)
+            logger.info(f"Results saved to file: {result_file}")
+        except Exception as save_error:
+            logger.warning(f"Failed to save results to file: {str(save_error)}")
         
-        summary_result = {
-            "bake_id": bake_id,
-            "status": pipeline_results.get('status', 'unknown'),
-            "processed_at": pipeline_results.get('processed_at'),
-            "input_notes_count": pipeline_results.get('input_notes_count', 0),
-            "processing_summary": pipeline_results.get('processing_summary', {}),
-            "insights": pipeline_results.get('insights', []),
-            "results_summary": pipeline_results.get('results', {}),
-            "pipeline_metadata": {
-                "session_id": pipeline_results.get('pipeline_metadata', {}).get('session_id'),
-                "execution_time": pipeline_results.get('pipeline_metadata', {}).get('execution_time'),
-                "nodes_executed": pipeline_results.get('pipeline_metadata', {}).get('nodes_executed', [])
-            }
-        }
-        
-        summary_file = RESULTS_DIR / f"bake_{bake_id}_summary.json"
-        with open(summary_file, 'w') as f:
-            json.dump(summary_result, f, indent=2, default=str)
-        
-        print(f"✅ BACKGROUND PROCESSING COMPLETE for {bake_id}")
         logger.info(f"Pipeline bake {bake_id} completed successfully")
-        logger.info(f"Processed {pipeline_results.get('input_notes_count', 0)} notes")
-        logger.info(f"Generated {len(pipeline_results.get('insights', []))} insights")
+        print(f"✅ BACKGROUND PROCESSING COMPLETE for {bake_id}")
                 
     except Exception as e:
         print(f"❌ ERROR in background processing for {bake_id}: {str(e)}")
         logger.error(f"Error processing bake {bake_id}: {str(e)}")
         logger.error(traceback.format_exc())
-
+                
         error_result = {
             "bake_id": bake_id,
             "status": "failed",
             "processed_at": datetime.now(timezone.utc).isoformat(),
-            "input_notes_count": len(notes_storage),
+            "input_notes_count": len(notes_storage) if notes_storage else 0,
             "error": str(e),
             "error_type": type(e).__name__,
-            "pipeline_metadata": {
-                "error_occurred": True,
-                "nodes_executed": []
+            "error_context": {
+                "pipeline_orchestrator_available": pipeline_orchestrator is not None,
+                "notes_storage_count": len(notes_storage) if notes_storage else 0,
+                "bake_data_keys": list(bake_data.keys()) if bake_data else []
+            },
+            "batch_optimization": {},  # Empty but present
+            "processing_summary": {
+                "captures_processed": 0,
+                "concepts_extracted": 0,
+                "api_calls_saved": 0,
+                "processing_time_seconds": 0,
+                "session_theme": "error"
             }
         }
 
-        # Add error result to processing_results too
         processing_results.append(error_result)
         print(f"❌ ERROR RESULT ADDED TO MEMORY for bake {bake_id}")
-        
-        error_file = RESULTS_DIR / f"bake_{bake_id}_error.json"
-        with open(error_file, 'w') as f:
-            json.dump(error_result, f, indent=2, default=str)
+
+        try:
+            error_file = RESULTS_DIR / f"bake_{bake_id}_error.json"
+            with open(error_file, 'w') as f:
+                json.dump(error_result, f, indent=2, default=str)
+        except Exception:
+            pass
 
 def save_individual_notes_background(notes, batch_id):
     """Save individual notes to files in background (for persistence)"""
