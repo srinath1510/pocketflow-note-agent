@@ -132,6 +132,18 @@ class NoteGenerationPipeline:
             shared_state["pipeline_metadata"]["end_time"] = datetime.now(timezone.utc).isoformat()
             shared_state["pipeline_metadata"]["status"] = "completed"
             shared_state["pipeline_stage"] = "completed"
+
+            batch_metrics = shared_state.get('batch_metrics')
+            if batch_metrics:
+                self.logger.info(f"✅ Batch metrics preserved in final result: {batch_metrics.get('api_calls_saved', 0)} calls saved")
+            else:
+                self.logger.warning("⚠️  No batch metrics found in final shared_state")
+                # Check pipeline_metadata as backup
+                batch_metrics = shared_state.get('pipeline_metadata', {}).get('batch_optimization_metrics')
+                if batch_metrics:
+                    shared_state['batch_metrics'] = batch_metrics
+                    self.logger.info(f"✅ Recovered batch metrics from pipeline_metadata")
+        
             self._log_completion_summary(shared_state)
             
             return shared_state
@@ -153,9 +165,16 @@ class NoteGenerationPipeline:
         historical_connections = shared_state.get('historical_connections', {})
         notion_generation = shared_state.get('notion_generation', {})
 
+        batch_metrics = shared_state.get('batch_metrics', {})
+
         self.logger.info("✅ Pipeline execution completed successfully")
         self.logger.info(f"   → Processed {len(raw_captures)} captures")
         self.logger.info(f"   → Extracted {len(extracted_concepts.get('learning_concepts', []))} key concepts")
+
+        if batch_metrics:
+            api_calls_saved = batch_metrics.get('api_calls_saved', 0)
+            cache_hit_rate = batch_metrics.get('cache_hit_rate', 0)
+            self.logger.info(f"   → 🚀 Batch optimization: {api_calls_saved} API calls saved ({cache_hit_rate:.1f}% cache hit rate)")
         
         if knowledge_graph:
             nodes_created = knowledge_graph.get('nodes_created', {})
@@ -286,6 +305,21 @@ def print_pipeline_summary(result: Dict[str, Any]):
     print(f"📊 Status: {metadata.get('status', 'Unknown')}")
     print(f"📊 Processing Time: {_calculate_processing_time(metadata):.2f} seconds")
     print(f"📊 Input Format: {metadata.get('input_format', 'unknown')}")
+
+    batch_metrics = result.get('batch_metrics', {})
+    if batch_metrics:
+        api_calls_saved = batch_metrics.get('api_calls_saved', 0)
+        cache_hit_rate = batch_metrics.get('cache_hit_rate', 0)
+        total_processed = batch_metrics.get('total_captures_processed', 0)
+        
+        print(f"\n🚀 BATCH OPTIMIZATION RESULTS:")
+        print(f"   ✅ API Calls Saved: {api_calls_saved}")
+        print(f"   ✅ Cache Hit Rate: {cache_hit_rate:.1f}%")
+        print(f"   ✅ Total Captures Processed: {total_processed}")
+        
+        if api_calls_saved > 0:
+            print(f"   💰 Cost Savings: ~{api_calls_saved * 0.01:.2f} USD (estimated)")
+    
     
     # Capture ingestion results
     raw_captures = result.get("raw_captures", [])

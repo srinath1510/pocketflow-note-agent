@@ -404,7 +404,39 @@ class PipelineOrchestrator:
         learning_recommendations = shared_state.get('learning_recommendations', [])
         notion_generation = shared_state.get('notion_generation', {})
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
+
+        batch_metrics = None
+
+        if 'batch_metrics' in shared_state:
+            batch_metrics = shared_state['batch_metrics']
+            print(f"✅ Found batch_metrics in shared_state root: {batch_metrics}")
+    
+        # Check pipeline_metadata
+        elif 'batch_optimization_metrics' in pipeline_metadata:
+            batch_metrics = pipeline_metadata['batch_optimization_metrics']
+            print(f"✅ Found batch_metrics in pipeline_metadata: {batch_metrics}")
         
+        # Check if it's embedded in content_analysis
+        elif 'content_analysis' in shared_state and 'optimization_metrics' in shared_state['content_analysis']:
+            batch_metrics = shared_state['content_analysis']['optimization_metrics']
+            print(f"✅ Found batch_metrics in content_analysis: {batch_metrics}")
+        
+        else:
+            print(f"❌ No batch_metrics found anywhere!")
+            print(f"   Available shared_state keys: {list(shared_state.keys())}")
+            print(f"   Pipeline metadata keys: {list(pipeline_metadata.keys())}")
+            
+            # Create default metrics for response
+            batch_metrics = {
+                'api_calls_made': 0,
+                'api_calls_saved': 0,
+                'api_calls_reduction_percent': 0,
+                'cache_hit_rate': 0,
+                'method_breakdown': {},
+                'total_captures_processed': len(raw_captures),
+                'error': 'batch_metrics_not_found_in_shared_state'
+            }
+
         formatted_results = {
             # Execution metadata
             'status': 'completed',
@@ -412,6 +444,8 @@ class PipelineOrchestrator:
             'user_id': shared_state.get('user_id'),
             'processed_at': datetime.now(timezone.utc).isoformat(),
             'processing_time': self._calculate_execution_time(pipeline_metadata),
+
+            'batch_optimization': batch_metrics,
             
             # High-level summary
             'summary': {
@@ -420,7 +454,8 @@ class PipelineOrchestrator:
                 'session_theme': extracted_concepts.get('session_theme', 'mixed_topics'),
                 'knowledge_connections_found': historical_connections.get('total_connections_found', 0),
                 'knowledge_gaps_identified': len(knowledge_gaps),
-                'recommendations_generated': len(learning_recommendations)
+                'recommendations_generated': len(learning_recommendations),
+                'api_calls_saved': batch_metrics.get('api_calls_saved', 0) if batch_metrics else 0
             },
             
             # Core learning results
@@ -452,7 +487,8 @@ class PipelineOrchestrator:
             'metadata': {
                 'pipeline_version': pipeline_metadata.get('pipeline_version', '1.1.0'),
                 'nodes_executed': self._count_executed_nodes(shared_state),
-                'input_format': 'minimal_capture'
+                'input_format': 'minimal_capture',
+                'batch_metrics': batch_metrics
             }
         }
         
