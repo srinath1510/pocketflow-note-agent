@@ -123,7 +123,7 @@ class NoteGenerationPipeline:
             "pipeline_metadata": {
                 "start_time": datetime.now(timezone.utc).isoformat(),
                 "input_format": "minimal_capture",
-                "pipeline_version": "1.1.0-decoupled",
+                "pipeline_version": "1.1.0-modular",
                 "captures_count": len(input_captures)
             }
         }
@@ -185,8 +185,8 @@ class NoteGenerationPipeline:
             connections = historical_connections.get('total_connections_found', 0)
             self.logger.info(f"   → Found {connections} historical knowledge connections")
 
-        if notion_generation and notion_generation.get('session_page_url'):
-            self.logger.info(f"   → Generated Notion page: {notion_generation['session_page_url']}")
+        if notion_generation and notion_generation.get('master_session_url'):
+            self.logger.info(f"   → Generated Notion page: {notion_generation['master_session_url']}")
 
     
     def run_single_node(self, node_name: str, input_captures: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -404,7 +404,7 @@ def print_pipeline_summary(result: Dict[str, Any]):
     if notion_generation:
         print(f"\n📄 NOTION INTEGRATION:")
         creation_summary = notion_generation.get('creation_summary', {})
-        session_url = notion_generation.get('session_page_url')
+        session_url = notion_generation.get('master_session_url')
         
         print(f"   📝 Session Page Created: {'✅' if creation_summary.get('session_created') else '❌'}")
         print(f"   📝 Total Pages Generated: {creation_summary.get('total_pages', 0)}")
@@ -511,9 +511,9 @@ def main():
 
 
 if __name__ == "__main__":
-    print("🎯 DECOUPLED AI NOTE PIPELINE")
+    print("🎯 AI NOTE PIPELINE")
     print("="*50)
-    print("\n📝 NEW MINIMAL INPUT FORMAT:")
+    print("\n📝 INPUT FORMAT:")
     print("""
     {
         "content": "Your learning content here...",
@@ -524,10 +524,4 @@ if __name__ == "__main__":
         "user_note": "Personal context"  # Optional
     }
     """)
-    print("\n✨ 90% LESS COMPLEXITY, 100% OF THE VALUE!")
-    print("   → No more browser fingerprinting")
-    print("   → No more viewport tracking")  
-    print("   → No more scroll depth nonsense")
-    print("   → Just pure content → AI insights")
-    print("\n🚀 Run with --sample to see it in action!")
     main()
