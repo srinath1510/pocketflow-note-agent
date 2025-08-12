@@ -9,6 +9,8 @@ import sys
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from neo4j import GraphDatabase
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -58,27 +60,21 @@ def check_environment():
 def test_neo4j_connection():
     """Test Neo4j database connection."""
     try:
-        from nodes.knowledge_graph import test_neo4j_connection
-        return test_neo4j_connection()
-    except ImportError:
-        # Fallback test
-        try:
-            from neo4j import GraphDatabase
-            uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
-            user = os.getenv('NEO4J_USER', 'neo4j')
-            password = os.getenv('NEO4J_PASSWORD', 'smartnotes123')
-            
-            driver = GraphDatabase.driver(uri, auth=(user, password))
-            with driver.session() as session:
-                result = session.run("RETURN 'Connected!' as message")
-                message = result.single()['message']
-                print(f"✅ Neo4j connection successful: {message}")
-            driver.close()
-            return True
-        except Exception as e:
-            print(f"❌ Neo4j connection failed: {e}")
-            print("   Make sure Neo4j is running: docker-compose up -d neo4j")
-            return False
+        uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+        user = os.getenv('NEO4J_USER', 'neo4j')
+        password = os.getenv('NEO4J_PASSWORD', 'smartnotes123')
+        
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        with driver.session() as session:
+            result = session.run("RETURN 'Connected!' as message")
+            message = result.single()['message']
+            print(f"✅ Neo4j connection successful: {message}")
+        driver.close()
+        return True
+    except Exception as e:
+        print(f"❌ Neo4j connection failed: {e}")
+        print("   Make sure Neo4j is running: docker-compose up -d neo4j")
+        return False
 
 
 def test_minimal_input_format():
@@ -623,4 +619,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    test_knowledge_graph_node()
