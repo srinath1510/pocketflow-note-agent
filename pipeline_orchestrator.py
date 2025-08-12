@@ -18,7 +18,17 @@ class PipelineOrchestrator:
     """
     Orchestrates the execution of the note processing pipeline.
     
-    Converts API note format → PocketFlow format → Execute pipeline → Return results
+    Decoupled Pipeline Orchestrator
+    
+    Responsibilities:
+    1. Accept minimal standardized input
+    2. Execute the complete pipeline 
+    3. Return structured results
+    
+    Does NOT handle:
+    - Input format conversion (handled by adapters)
+    - Browser-specific logic (removed completely)
+    - Request parsing (handled by transport layer)
     """
     
     def __init__(self):
@@ -30,521 +40,426 @@ class PipelineOrchestrator:
         except Exception as e:
             self.logger.error(f"Failed to initialize pipeline: {str(e)}")
             raise
+    
+    def _create_error_response(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create consistent error responses with helpful information
+        """
+        return {
+            'status': 'failed',
+            'error': {
+                'type': type(error).__name__,
+                'message': str(error),
+                'timestamp': datetime.now(timezone.utc).isoformat()
+        },
+        'context': {
+            'user_id': context.get('user_id', 'unknown'),
+            'session_id': context.get('session_id', 'unknown'),
+            'input_captures_count': context.get('input_count', 0),
+            'pipeline_stage': context.get('stage', 'unknown')
+        },
+        'pipeline_results': None,
+        'suggestions': self._get_error_suggestions(error)
+    }
+
+    def _get_error_suggestions(self, error: Exception) -> List[str]:
+        """
+        Provide helpful suggestions based on error type
+        """
+        error_type = type(error).__name__
+    
+        if error_type == 'ValueError':
+            return [
+                "Check input format matches minimal capture schema",
+                "Ensure required fields 'content' and 'user_id' are present",
+                "Verify content length is at least 10 characters"
+            ]
+        elif error_type == 'KeyError':
+            return [
+                "Missing required field in input data",
+                "Check that all captures have 'content' and 'user_id' fields"
+            ]
+        elif 'LLM' in str(error) or 'API' in str(error):
+            return [
+                "Check LLM provider API keys are configured",
+                "Verify network connectivity",
+                "Try again in a few moments"
+            ]
+        elif 'Neo4j' in str(error):
+            return [
+                "Check Neo4j database is running",
+                "Verify database connection settings",
+                "Ensure Neo4j credentials are correct"
+            ]
+        else:
+            return [
+                "Check system logs for more details",
+                "Verify all required services are running",
+                "Contact support if issue persists"
+            ]
 
 
-    def run_pipeline(self, bake_data: Dict[str, Any], session_notes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def run_pipeline(self, captures: List[Dict[str, Any]], execution_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Execute the complete pipeline on session notes.
         
         Args:
-            bake_data: Bake request metadata from API
-            session_notes: List of notes from the current session
+            captures: List of captures in minimal format:
+                {
+                    "content": "string",  # Required
+                    "user_id": "string",  # Required  
+                    "source_url": "string",  # Optional
+                    "title": "string",  # Optional
+                    "timestamp": "ISO string",  # Optional
+                    "intent": "learn|research|reference|archive",  # Optional
+                    "user_note": "string"  # Optional
+                }
+            execution_context: Optional execution metadata
             
         Returns:
             Complete pipeline results
         """
-        bake_id = bake_data.get('bake_id', 'unknown')
-        self.logger.info(f"Starting pipeline execution for bake {bake_id} with {len(session_notes)} notes")
-        
+        execution_context = execution_context or {}
+
+        error_context = {
+            'input_count': len(captures),
+            'stage': 'initialization'
+        }
         try:
-            pipeline_input = self._convert_notes_to_pipeline_format(session_notes, bake_data)
+        # Safety check for batch size
+            MAX_CAPTURES_PER_BATCH = 100
+            if len(captures) > MAX_CAPTURES_PER_BATCH:
+                raise ValueError(f"Too many captures. Maximum {MAX_CAPTURES_PER_BATCH} per batch, got {len(captures)}")
             
+            error_context['stage'] = 'validation'
+            validated_captures = self._validate_and_normalize_captures(captures)
+            
+            if not validated_captures:
+                raise ValueError("No valid captures provided")
+            
+            user_id = validated_captures[0].get('user_id', 'unknown')
+            session_id = execution_context.get('session_id') or self._generate_session_id(user_id)
+            
+            # Update error context
+            error_context.update({
+                'user_id': user_id,
+                'session_id': session_id,
+                'stage': 'pipeline_execution'
+            })
+
+            self.logger.info(f"Starting pipeline execution for user {user_id}")
+            self.logger.info(f"Processing {len(validated_captures)} captures")
+
+            pipeline_input = self._convert_to_pipeline_format(validated_captures, session_id)
+            
+            error_context['stage'] = 'pipeline_processing'
             shared_state = self.pipeline.run(pipeline_input)
             
-            pipeline_results = self._format_pipeline_results(shared_state, bake_data)
+            error_context['stage'] = 'result_formatting'
+            pipeline_results = self._format_pipeline_results(shared_state, execution_context)
             
-            self.logger.info(f"Pipeline execution completed successfully for bake {bake_id}")
+            self.logger.info(f"Pipeline execution completed successfully")
             return pipeline_results
+        
+        except ValueError as e:
+            # Handle validation errors specifically
+            self.logger.error(f"Validation error: {str(e)}")
+            return self._create_error_response(e, error_context)
             
         except Exception as e:
-            self.logger.error(f"Pipeline execution failed for bake {bake_id}: {str(e)}")
+            # Handle all other errors
+            self.logger.error(f"Pipeline execution failed at stage: {error_context.get('stage', 'unknown')}")
+            self.logger.error(f"Error: {str(e)}")
             self.logger.error(traceback.format_exc())
             
-            return {
-                'bake_id': bake_id,
-                'status': 'failed',
-                'error': str(e),
-                'processed_at': datetime.now(timezone.utc).isoformat(),
-                'input_notes_count': len(session_notes),
-                'pipeline_results': None,
-                'shared_state': None
+            return self._create_error_response(e, error_context)
+
+    
+    def _validate_capture_format(self, capture: Dict[str, Any], index: int) -> List[str]:
+        """
+        More comprehensive validation with specific error messages
+        """
+        issues = []
+    
+        # Required field validation
+        if not capture.get('content'):
+            issues.append(f"Capture {index}: Missing 'content' field")
+        elif not isinstance(capture['content'], str):
+            issues.append(f"Capture {index}: 'content' must be a string")
+        elif len(capture['content'].strip()) < 10:
+            issues.append(f"Capture {index}: Content too short (minimum 10 characters)")
+    
+        if not capture.get('user_id'):
+            issues.append(f"Capture {index}: Missing 'user_id' field")
+        elif not isinstance(capture['user_id'], str):
+            issues.append(f"Capture {index}: 'user_id' must be a string")
+        elif len(capture['user_id'].strip()) < 2:
+            issues.append(f"Capture {index}: 'user_id' too short (minimum 2 characters)")
+    
+        # Optional field validation
+        if 'intent' in capture:
+            valid_intents = ['learn', 'research', 'reference', 'archive']
+            if capture['intent'] not in valid_intents:
+                issues.append(f"Capture {index}: Invalid intent '{capture['intent']}'. Valid options: {valid_intents}")
+    
+        if 'source_url' in capture and capture['source_url']:
+            if not isinstance(capture['source_url'], str):
+                issues.append(f"Capture {index}: 'source_url' must be a string")
+        elif capture['source_url'] != 'unknown' and not self._is_valid_url(capture['source_url']):
+            issues.append(f"Capture {index}: Invalid URL format")
+    
+        return issues
+
+
+    def _is_valid_url(self, url: str) -> bool:
+        """Simple URL validation"""
+        try:
+            from urllib.parse import urlparse
+            result = urlparse(url)
+            return all([result.scheme, result.netloc])
+        except Exception:
+            return False
+
+
+    def _validate_and_normalize_captures(self, captures: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Validate and normalize captures in minimal format
+        
+        Required fields: content, user_id
+        Optional fields: source_url, title, timestamp, intent, user_note
+        """
+        if not isinstance(captures, list):
+            raise ValueError("Captures must be a list")
+        
+        if not captures:
+            raise ValueError("No captures provided")
+        
+        validated_captures = []
+        all_issues = []
+
+        for i, capture in enumerate(captures):
+            if not isinstance(capture, dict):
+                all_issues.append(f"Capture {i}: Must be a dictionary, got {type(capture).__name__}")
+                continue
+
+            if not capture.get('content') or not capture.get('content').strip():
+                all_issues.append(f"Capture {i}: Missing or empty 'content' field")
+                continue
+            
+            if not capture.get('user_id') or not capture.get('user_id').strip():
+                all_issues.append(f"Capture {i}: Missing or empty 'user_id' field")
+                continue
+            
+            content = capture['content'].strip()
+            if len(content) < 10:
+                all_issues.append(f"Capture {i}: Content too short (minimum 10 characters, got {len(content)})")
+                continue
+            
+            normalized_capture = {
+                'content': capture['content'].strip(),
+                'user_id': capture['user_id'].strip(),
+                'source_url': capture.get('source_url', 'unknown'),
+                'title': capture.get('title', 'Untitled'),
+                'timestamp': capture.get('timestamp') or datetime.now(timezone.utc).isoformat(),
+                'intent': capture.get('intent', 'learn'),
+                'user_note': capture.get('user_note', '')
             }
 
-
-    def _convert_notes_to_pipeline_format(self, session_notes: List[Dict[str, Any]], bake_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Convert API note format to the format expected by the 1st node CaptureIngestionNode.
+            # Validate intent
+            valid_intents = ['learn', 'research', 'reference', 'archive']
+            if normalized_capture['intent'] not in valid_intents:
+                normalized_capture['intent'] = 'learn'
         
-        Args:
-            session_notes: Notes from API
-            bake_data: Bake request metadata
+            validated_captures.append(normalized_capture)
+
+        if all_issues:
+            for issue in all_issues:
+                self.logger.warning(issue)
             
-        Returns:
-            Notes in pipeline format
-        """
-        self.logger.info(f"Converting {len(session_notes)} notes to pipeline format")
-
-        # debug log
-        if session_notes:
-            self.logger.info(f"Sample note structure: {json.dumps(session_notes[0], indent=2)}")
+        if not validated_captures:
+            error_message = f"No valid captures found. Issues:\n" + "\n".join(all_issues)
+            raise ValueError(error_message)
         
+        self.logger.info(f"✅ Validated {len(validated_captures)}/{len(captures)} captures")
+        return validated_captures
+        
+
+    def _convert_to_pipeline_format(self, minimal_captures: List[Dict[str, Any]], session_id: str) -> List[Dict[str, Any]]:
+        """
+        Convert minimal capture format to internal pipeline format
+        
+        This bridges the gap between the clean minimal input and what the existing
+        pipeline nodes expect, while removing all the browser extension bloat
+        """
         pipeline_captures = []
         
-        for i, note in enumerate(session_notes):
-            try:
-                source = note.get('source', {})
-                metadata = note.get('metadata', {})
-                
-                pipeline_capture = {
-                # Required fields for CaptureIngestionNode
-                'url': source.get('url', ''),
-                'content': note.get('content', ''),  # Main content field
-                'timestamp': source.get('timestamp') or metadata.get('timestamp') or datetime.now(timezone.utc).isoformat(),
-                
-                # Selection and context data
-                'selected_text': metadata.get('selected_text', note.get('content', '')),
-                'highlights': [],  # Not present in your data structure
-                'context_before': metadata.get('context_before', ''),
-                'context_after': metadata.get('context_after', ''),
-                
-                # Interaction metadata
-                'dwell_time': metadata.get('time_on_page', 0),
-                'scroll_depth': metadata.get('scroll_depth_at_selection', 0),
-                'viewport_size': metadata.get('viewport_size', 'unknown'),
-                'user_agent': metadata.get('browser', 'Unknown'),
-                'trigger': metadata.get('capture_trigger', 'extension'),
-                'intent': metadata.get('intent', 'general'),
-                
-                # Position metadata
-                'selection_start_offset': metadata.get('selection_start_offset', 0),
-                'selection_end_offset': metadata.get('selection_end_offset', 0),
-                'relative_position': metadata.get('relative_position', 0.0),
-                
-                # Content analysis metadata
-                'word_count': metadata.get('wordCount', 0),
-                'selection_length': metadata.get('selectionLength', 0),
-                'page_title': source.get('title') or metadata.get('pageTitle', ''),
-                'domain': metadata.get('domain', ''),
-                'content_type': metadata.get('contentType', 'text/html'),
-                'language': metadata.get('language', 'unknown'),
-                
-                # Technical metadata
-                'has_code': metadata.get('has_code', False),
-                'has_math': metadata.get('has_math', False),
-                'has_data_tables': metadata.get('has_data_tables', False),
-                'link_count': metadata.get('linkCount', 0),
-                'image_count': metadata.get('image_count', 0),
-                'video_count': metadata.get('video_count', 0),
-                
-                # API tracking metadata
-                'api_note_id': note.get('id'),
-                'api_stored_at': note.get('stored_at'),
-                'note_type': note.get('type', 'selection'),
-                'tag': note.get('tag', ''),
-                'sync_status': note.get('sync_status', 'pending'),
-                'bake_id': bake_data.get('bake_id'),
-                
-                # Additional context
-                'capture_id': metadata.get('capture_id'),
-                'local_id': metadata.get('local_id'),
-                'batch_pending': metadata.get('batch_pending', False)
-                }
-                
-                pipeline_captures.append(pipeline_capture)
-                self.logger.debug(f"Converted note {i+1}/{len(session_notes)}: {pipeline_capture.get('url', 'no-url')}")
-                
-            except Exception as e:
-                self.logger.warning(f"Error converting note {i}: {str(e)}. Note data: {json.dumps(note, indent=2)}")
-                continue
-        
-        self.logger.info(f"Successfully converted {len(pipeline_captures)} notes to pipeline format")
-        return pipeline_captures
-        
-
-    def _format_pipeline_results(self, shared_state: Dict[str, Any], bake_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Format pipeline results into a structure suitable for API storage.
-        
-        Args:
-            shared_state: Complete shared_state from pipeline execution
-            bake_data: Original bake request metadata
+        for capture in minimal_captures:
+            domain = self._extract_domain(capture.get('source_url', ''))
             
-        Returns:
-            Formatted results for API storage
-        """
-        bake_id = bake_data.get('bake_id', 'unknown')
+            content_category = self._map_intent_to_category(capture.get('intent', 'learn'))
+            
+            knowledge_level = self._estimate_knowledge_level(capture['content'])
+            
+            pipeline_capture = {
+                # Core fields (required by existing nodes)
+                'url': capture.get('source_url', 'unknown'),
+                'content': capture['content'],
+                'timestamp': capture['timestamp'],
+                
+                # User context
+                'user_id': capture['user_id'],
+                'session_id': session_id,
+                
+                # Minimal metadata (only what's actually useful)
+                'title': capture.get('title', 'Untitled'),
+                'domain': domain,
+                'intent': capture.get('intent', 'learn'),
+                'user_note': capture.get('user_note', ''),
+                
+                # Classification (derived from content)
+                'content_category': content_category,
+                'knowledge_level': knowledge_level,
+                
+                # Technical metadata (minimal set)
+                'word_count': len(capture['content'].split()),
+                'content_type': 'text/html',  # Default assumption
+                'language': 'en',  # Default assumption
+                
+                'selected_text': '',  # Let AI decide what's important
+                'highlights': [],
+                'context_before': '',
+                'context_after': '',
+                'dwell_time': 0,  # Not meaningful for learning
+                'scroll_depth': 0,  # Not meaningful for learning
+                'viewport_size': 'unknown',  # Browser fingerprinting
+                'user_agent': 'minimal_api',
+                'trigger': 'api',
+                'selection_start_offset': 0,
+                'selection_end_offset': 0,
+                'relative_position': 0.0,
+                
+                # Source tracking
+                'input_type': 'minimal_capture',
+                'processed_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            pipeline_captures.append(pipeline_capture)
         
+        return pipeline_captures
+
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL"""
+        if not url or url == 'unknown':
+            return 'unknown'
+        
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            return parsed.netloc.lower()
+        except Exception:
+            return 'unknown'
+
+    def _map_intent_to_category(self, intent: str) -> str:
+        """Map user intent to content category"""
+        intent_mapping = {
+            'learn': 'educational',
+            'research': 'research_material',
+            'reference': 'documentation',
+            'archive': 'general'
+        }
+        return intent_mapping.get(intent, 'general')
+
+    def _estimate_knowledge_level(self, content: str) -> str:
+        """Simple heuristic to estimate knowledge level"""
+        word_count = len(content.split())
+        
+        # Count technical indicators
+        technical_terms = len([word for word in content.split() if len(word) > 10])
+        technical_ratio = technical_terms / max(word_count, 1)
+        
+        if word_count > 1000 and technical_ratio > 0.05:
+            return 'advanced'
+        elif word_count > 300 and technical_ratio > 0.02:
+            return 'intermediate'
+        else:
+            return 'basic'
+
+    def _generate_session_id(self, user_id: str) -> str:
+        """Generate session ID"""
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+        return f"{user_id}_session_{timestamp}"
+
+    def _format_pipeline_results(self, shared_state: Dict[str, Any], execution_context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Format pipeline results for API consumption
+        
+        Simplified format focused on actual value, not internal complexity
+        """
+        # Extract key results
         raw_captures = shared_state.get('raw_captures', [])
         extracted_concepts = shared_state.get('extracted_concepts', {})
-        content_analysis = shared_state.get('content_analysis', {})
         knowledge_graph = shared_state.get('knowledge_graph', {})
         historical_connections = shared_state.get('historical_connections', {})
         knowledge_gaps = shared_state.get('knowledge_gaps', [])
-        reinforcement_opportunities = shared_state.get('reinforcement_opportunities', [])
-        learning_patterns = shared_state.get('learning_patterns', {})
         learning_recommendations = shared_state.get('learning_recommendations', [])
         notion_generation = shared_state.get('notion_generation', {})
         pipeline_metadata = shared_state.get('pipeline_metadata', {})
-        
-        processing_stats = self._calculate_processing_stats(shared_state, raw_captures, extracted_concepts)
-        
-        insights = self._generate_processing_insights(raw_captures, extracted_concepts, shared_state)
         
         formatted_results = {
-            'bake_id': bake_id,
-            'status': pipeline_metadata.get('status', 'completed'),
+            # Execution metadata
+            'status': 'completed',
+            'session_id': shared_state.get('session_id'),
+            'user_id': shared_state.get('user_id'),
             'processed_at': datetime.now(timezone.utc).isoformat(),
-            'input_notes_count': bake_data.get('total_notes', 0),
+            'processing_time': self._calculate_execution_time(pipeline_metadata),
             
-            'pipeline_metadata': {
-                'session_id': shared_state.get('session_id'),
-                'pipeline_stage': shared_state.get('pipeline_stage'),
-                'execution_time': self._calculate_execution_time(pipeline_metadata),
-                'pipeline_version': pipeline_metadata.get('pipeline_version'),
-                'nodes_executed': ['capture_ingestion'],
-                **pipeline_metadata
-            },
-            
-            'processing_summary': processing_stats,
-            'insights': insights,
-            'processed_captures': raw_captures,
-            'shared_state': shared_state,
-            
-            'results': {
-                'summary': f"Successfully processed {len(raw_captures)} captures through capture ingestion",
+            # High-level summary
+            'summary': {
                 'captures_processed': len(raw_captures),
-                'concepts_extracted': len(extracted_concepts.get('key_concepts', [])),
+                'concepts_extracted': len(extracted_concepts.get('learning_concepts', [])),
                 'session_theme': extracted_concepts.get('session_theme', 'mixed_topics'),
-                'topics_identified': extracted_concepts.get('topics', []),
-                'content_types_detected': processing_stats.get('content_types_detected', {}),
-                'domains_processed': processing_stats.get('domains_processed', []),
-                'complexity_level': extracted_concepts.get('complexity_assessment', {}).get('overall_level', 'unknown'),
-
-                'knowledge_graph_nodes': knowledge_graph.get('nodes_created', {}),
-                'knowledge_graph_relationships': knowledge_graph.get('relationships_created', 0),
-                'graph_density': knowledge_graph.get('metrics', {}).get('graph_density', 0),
-
-                'historical_analysis': {
-                    'connections_found': historical_connections.get('total_connections_found', 0),
-                    'knowledge_gaps_identified': len(knowledge_gaps),
-                    'reinforcement_opportunities': len(reinforcement_opportunities),
-                    'learning_recommendations': len(learning_recommendations),
-                    'learning_patterns_analyzed': bool(learning_patterns)
-                },
-                'notion_generation': {
-                    'session_page_created': notion_generation.get('creation_summary', {}).get('session_created', False),
-                    'total_pages_created': notion_generation.get('creation_summary', {}).get('total_pages', 0),
-                    'session_page_url': notion_generation.get('session_page_url'),
-                    'databases': notion_generation.get('databases', {}),
-                    'generated_at': notion_generation.get('generated_at')
-                },
-                
-                'next_steps': self._generate_next_steps(learning_recommendations, knowledge_gaps)
+                'knowledge_connections_found': historical_connections.get('total_connections_found', 0),
+                'knowledge_gaps_identified': len(knowledge_gaps),
+                'recommendations_generated': len(learning_recommendations)
             },
-
-            'detailed_results': {
-                'content_analysis': {
-                    'extracted_concepts': extracted_concepts,
-                    'analysis_metadata': content_analysis
-                },
-                'knowledge_graph': knowledge_graph,
-                'historical_analysis': {
-                    'connections': historical_connections,
-                    'knowledge_gaps': knowledge_gaps,
-                    'reinforcement_opportunities': reinforcement_opportunities,
-                    'learning_patterns': learning_patterns,
-                    'recommendations': learning_recommendations
-                },
-                'notion_generation': notion_generation 
-            }
             
+            # Core learning results
+            'learning_analysis': {
+                'key_concepts': extracted_concepts.get('learning_concepts', []),
+                'session_theme': extracted_concepts.get('session_theme', 'general'),
+                'complexity_level': extracted_concepts.get('complexity_assessment', {}).get('overall_level', 'intermediate'),
+                'knowledge_progression': extracted_concepts.get('knowledge_progression', []),
+                'learning_goals': extracted_concepts.get('learning_goals', [])
+            },
+            
+            # Knowledge connections
+            'knowledge_insights': {
+                'historical_connections': historical_connections.get('total_connections_found', 0),
+                'knowledge_gaps': knowledge_gaps,
+                'learning_recommendations': learning_recommendations,
+                'next_steps': self._extract_next_steps(learning_recommendations)
+            },
+            
+            # Generated outputs
+            'outputs': {
+                'notion_page_created': notion_generation.get('session_page_url') is not None,
+                'notion_page_url': notion_generation.get('session_page_url'),
+                'knowledge_graph_updated': bool(knowledge_graph),
+                'export_available': True
+            },
+            
+            # Pipeline metadata (simplified)
+            'metadata': {
+                'pipeline_version': pipeline_metadata.get('pipeline_version', '1.1.0'),
+                'nodes_executed': self._count_executed_nodes(shared_state),
+                'input_format': 'minimal_capture'
+            }
         }
-
-        self.logger.info(f"Formatted pipeline results for bake {bake_id}")
+        
         return formatted_results
 
-
-    def _calculate_processing_stats(self, shared_state: Dict[str, Any], raw_captures: List[Dict[str, Any]], extracted_concepts: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate processing statistics from pipeline results."""
-        pipeline_metadata = shared_state.get('pipeline_metadata', {})
-        capture_summary = pipeline_metadata.get('capture_ingestion_summary', {})
-        content_summary = pipeline_metadata.get('content_analysis_summary', {})
-        kg_summary = pipeline_metadata.get('knowledge_graph_summary', {})
-        historical_summary = pipeline_metadata.get('historical_analysis_summary', {})
-        notion_summary = pipeline_metadata.get('notion_generation_summary', {})
-
-        batch_metrics = None
-        
-        if 'batch_metrics' in shared_state:
-            batch_metrics = shared_state['batch_metrics']
-            self.logger.info(f"🔍 Found batch_metrics in shared_state: {batch_metrics}")
-    
-        # Check content_analysis_summary
-        elif content_summary.get('batch_optimization_metrics'):
-            batch_metrics = content_summary['batch_optimization_metrics']
-            self.logger.info(f"🔍 Found batch_metrics in content_analysis_summary: {batch_metrics}")
-    
-        # Check content_analysis directly
-        elif shared_state.get('content_analysis', {}).get('optimization_metrics'):
-            batch_metrics = shared_state['content_analysis']['optimization_metrics']
-            self.logger.info(f"🔍 Found batch_metrics in content_analysis: {batch_metrics}")
-    
-        # Create default empty metrics if not found
-        if not batch_metrics:
-            self.logger.warning("⚠️  No batch metrics found - creating empty metrics")
-            batch_metrics = {
-                'api_calls_made': 0,
-                'api_calls_saved': 0,
-                'api_calls_reduction_percent': 0,
-                'cache_hit_rate': 0,
-                'method_breakdown': {},
-                'total_captures_processed': len(raw_captures)
-            }
-        
-        stats = {
-            'total_input_captures': capture_summary.get('total_input_captures', 0),
-            'successfully_processed': len(raw_captures),
-            'processing_success_rate': capture_summary.get('processing_success_rate', 0),
-            'content_types_detected': capture_summary.get('content_types_detected', {}),
-            'domains_processed': capture_summary.get('domains_processed', []),
-            'average_content_length': capture_summary.get('average_content_length', 0),
-
-            # Content analysis stats
-            'concepts_extracted': content_summary.get('concepts_extracted', 0),
-            'entities_found': content_summary.get('entities_found', 0),
-            'topics_identified': content_summary.get('topics_identified', 0),
-            'analysis_method': content_summary.get('analysis_method', 'unknown'),
-            'overall_complexity': content_summary.get('overall_complexity', 'unknown'),
-            'session_theme': content_summary.get('session_theme', 'unknown'),
-            'llm_provider': content_summary.get('llm_provider', 'unknown'),
-
-            'batch_optimization_metrics': batch_metrics,
-
-            # Knowledge graph stats
-            'knowledge_graph_nodes_created': kg_summary.get('total_nodes_created', 0),
-            'knowledge_graph_relationships': kg_summary.get('total_relationships', 0),
-            'graph_density': kg_summary.get('graph_density', 0),
-
-            # Historical analysis stats
-            'historical_connections_found': historical_summary.get('connections_found', 0),
-            'knowledge_gaps_identified': historical_summary.get('knowledge_gaps_identified', 0),
-            'reinforcement_opportunities_found': historical_summary.get('reinforcement_opportunities', 0),
-            'learning_patterns_detected': historical_summary.get('learning_patterns_detected', 0),
-
-            # Notion generation stats
-            'notion_pages_created': notion_summary.get('total_pages_created', 0),
-            'notion_session_created': notion_summary.get('session_url') is not None,
-            'notion_concepts_created': notion_summary.get('concepts_created', 0),
-            'notion_sources_created': notion_summary.get('sources_created', 0)
-        }
-        
-        # Add additional statistics from processed captures
-        if raw_captures:
-            knowledge_levels = {}
-            categories = {}
-            
-            for capture in raw_captures:
-                metadata = capture.get('metadata', {})
-                
-                # Count knowledge levels
-                level = metadata.get('knowledge_level', 'unknown')
-                knowledge_levels[level] = knowledge_levels.get(level, 0) + 1
-                
-                # Count categories
-                category = metadata.get('content_category', 'unknown')
-                categories[category] = categories.get(category, 0) + 1
-            
-            stats['knowledge_level_distribution'] = knowledge_levels
-            stats['category_distribution'] = categories
-            stats['has_code_samples'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_code', False))
-            stats['has_math_content'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_math', False))
-            stats['has_data_tables'] = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_data_tables', False))
-        
-        if extracted_concepts:
-            stats['learning_concepts'] = extracted_concepts.get('learning_concepts', [])
-            stats['key_terms'] = extracted_concepts.get('key_terms', {})
-            stats['methodologies'] = extracted_concepts.get('methodologies', [])
-            stats['skills'] = extracted_concepts.get('skills', [])
-            stats['session_theme'] = extracted_concepts.get('session_theme', 'mixed_topics')
-            stats['learning_goals'] = extracted_concepts.get('learning_goals', [])
-
-        return stats
-
-
-    def _generate_processing_insights(self, raw_captures: List[Dict[str, Any]], extracted_concepts: Dict[str, Any], shared_state: Dict[str, Any]) -> List[str]:
-        """Generate insights about the processed data."""
-        insights = []
-        
-        if not raw_captures:
-            insights.append("No captures were successfully processed")
-            return insights
-        
-        if extracted_concepts:
-            learning_concepts = extracted_concepts.get('learning_concepts', [])
-            session_theme = extracted_concepts.get('session_theme', '')
-            learning_goals = extracted_concepts.get('learning_goals', [])
-            entities = extracted_concepts.get('entities', {})
-            complexity = extracted_concepts.get('complexity_assessment', {}).get('overall_level', 'basic')
-            
-            # Learning concepts insights
-            if learning_concepts:
-                insights.append(f"Identified {len(learning_concepts)} learning concepts: {', '.join(learning_concepts[:3])}")
-            
-            # Session theme insights
-            if session_theme and session_theme != 'mixed_topics':
-                insights.append(f"Learning session focused on: {session_theme.replace('_', ' ')}")
-            
-            # Learning goals insights
-            if learning_goals and len(learning_goals) > 0:
-                primary_goal = learning_goals[0] if learning_goals[0] != 'general_learning' else None
-                if primary_goal:
-                    insights.append(f"Primary learning objective: {primary_goal.replace('_', ' ')}")
-            
-            # Entity insights
-            if entities:
-                entity_types = list(set(entities.values()))
-                insights.append(f"Found entities across {len(entity_types)} categories: {', '.join(entity_types[:3])}")
-            
-            # Complexity insights
-            insights.append(f"Content complexity assessed as: {complexity}")
-            
-        # Knowledge graph insights
-        knowledge_graph = shared_state.get('knowledge_graph', {})
-        if knowledge_graph:
-            nodes_created = knowledge_graph.get('nodes_created', {})
-            total_nodes = sum(nodes_created.values())
-            relationships = knowledge_graph.get('relationships_created', 0)
-            
-            insights.append(f"Created knowledge graph with {total_nodes} nodes and {relationships} relationships")
-            
-            # Graph structure insights
-            metrics = knowledge_graph.get('metrics', {})
-            density = metrics.get('graph_density', 0)
-            if density > 0.5:
-                insights.append("High knowledge connectivity detected - concepts are well-integrated")
-            elif density > 0.2:
-                insights.append("Moderate knowledge connectivity - some concept clusters identified")
-            else:
-                insights.append("Low knowledge connectivity - concepts may need more integration")
-        
-        # Historical analysis insights - NEW!
-        historical_connections = shared_state.get('historical_connections', {})
-        knowledge_gaps = shared_state.get('knowledge_gaps', [])
-        reinforcement_opportunities = shared_state.get('reinforcement_opportunities', [])
-        learning_recommendations = shared_state.get('learning_recommendations', [])
-        
-        if historical_connections:
-            total_connections = historical_connections.get('total_connections_found', 0)
-            if total_connections > 0:
-                insights.append(f"Connected new learning to {total_connections} existing concepts in your knowledge base")
-            else:
-                insights.append("No connections to existing knowledge found - this appears to be a new learning domain")
-        
-        # Knowledge gaps insights
-        if knowledge_gaps:
-            high_priority_gaps = [gap for gap in knowledge_gaps if gap.get('priority') == 'high']
-            if high_priority_gaps:
-                gap_concepts = [gap.get('missing_concept', 'unknown') for gap in high_priority_gaps[:2]]
-                insights.append(f"Critical knowledge gaps identified: {', '.join(gap_concepts)}")
-            elif len(knowledge_gaps) > 0:
-                insights.append(f"Identified {len(knowledge_gaps)} areas for foundational learning")
-        
-        # Reinforcement insights
-        if reinforcement_opportunities:
-            urgent_reinforcement = [opp for opp in reinforcement_opportunities if opp.get('priority') == 'high']
-            if urgent_reinforcement:
-                concepts_to_review = [opp.get('concept', 'unknown') for opp in urgent_reinforcement[:2]]
-                insights.append(f"Urgent review recommended for: {', '.join(concepts_to_review)}")
-            elif len(reinforcement_opportunities) > 0:
-                insights.append(f"Found {len(reinforcement_opportunities)} concepts that could benefit from review")
-        
-        # Learning recommendations insights
-        if learning_recommendations:
-            high_priority_recs = [rec for rec in learning_recommendations if rec.get('priority') == 'high']
-            if high_priority_recs:
-                insights.append(f"Generated {len(high_priority_recs)} high-priority learning recommendations")
-            else:
-                insights.append(f"Generated {len(learning_recommendations)} learning recommendations")
-        
-        # Notion generation insights
-        notion_generation = shared_state.get('notion_generation', {})
-        if notion_generation:
-            creation_summary = notion_generation.get('creation_summary', {})
-            total_pages = creation_summary.get('total_pages', 0)
-            session_url = notion_generation.get('session_page_url')
-            
-            if session_url:
-                insights.append(f"Generated beautiful Notion pages: {total_pages} total pages created")
-                insights.append("Your learning session is now beautifully formatted and ready to review in Notion")
-            else:
-                insights.append("Notion generation attempted but session page URL not available")
-        
-        # Basic capture insights
-        domains = set()
-        knowledge_levels = {}
-        
-        for capture in raw_captures:
-            metadata = capture.get('metadata', {})
-            domain = metadata.get('domain', 'unknown')
-            domains.add(domain)
-            
-            level = metadata.get('knowledge_level', 'basic')
-            knowledge_levels[level] = knowledge_levels.get(level, 0) + 1
-        
-        insights.append(f"Captured content from {len(domains)} different sources")
-
-        # Generate insights based on patterns
-        total_captures = len(raw_captures)
-
-        # Knowledge level insights
-        if knowledge_levels:
-            if knowledge_levels.get('advanced', 0) > total_captures * 0.3:
-                insights.append("High proportion of advanced-level content detected")
-            elif knowledge_levels.get('basic', 0) > total_captures * 0.7:
-                insights.append("Mostly basic-level content captured")
-            else:
-                insights.append("Balanced mix of knowledge levels detected")
-        
-        # Technical content insights
-        code_captures = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_code', False))
-        if code_captures > 0:
-            insights.append(f"Found {code_captures} captures with code samples")
-        
-        math_captures = sum(1 for c in raw_captures if c.get('metadata', {}).get('has_math', False))
-        if math_captures > 0:
-            insights.append(f"Found {math_captures} captures with mathematical content")
-        
-        return insights
-
-
-    def _generate_next_steps(self, recommendations: List[Dict[str, Any]], knowledge_gaps: List[Dict[str, Any]]) -> List[str]:
-        """Generate actionable next steps based on analysis results."""
-        next_steps = []
-        
-        # Priority 1: Address high-priority recommendations
-        high_priority_recs = [rec for rec in recommendations if rec.get('priority') == 'high']
-        for rec in high_priority_recs[:2]:  # Top 2
-            next_steps.append(rec.get('action', 'Review recommendations'))
-        
-        # Priority 2: Address critical knowledge gaps
-        critical_gaps = [gap for gap in knowledge_gaps if gap.get('priority') == 'high']
-        for gap in critical_gaps[:2]:  # Top 2
-            next_steps.append(gap.get('recommended_action', f"Study {gap.get('missing_concept', 'identified gaps')}"))
-        
-        # Priority 3: Continue learning path
-        if not next_steps:
-            next_steps.append("Continue exploring the concepts from this session")
-            next_steps.append("Review and organize your captured notes")
-        
-        # Always include note generation as final step
-        next_steps.append("Review your beautifully formatted learning session in Notion")
-        
-        return next_steps[:5]  # Limit to 5 next steps
-        
-        
-
-    def _calculate_execution_time(self, pipeline_metadata: Dict[str, Any]) -> Optional[float]:
-        """Calculate pipeline execution time in seconds."""
+    def _calculate_execution_time(self, pipeline_metadata: Dict[str, Any]) -> float:
+        """Calculate pipeline execution time"""
         try:
             start_time = pipeline_metadata.get('start_time')
             end_time = pipeline_metadata.get('end_time')
@@ -556,4 +471,102 @@ class PipelineOrchestrator:
         except Exception:
             pass
         
-        return None
+        return 0.0
+
+    def _extract_next_steps(self, recommendations: List[Dict[str, Any]]) -> List[str]:
+        """Extract actionable next steps"""
+        next_steps = []
+        
+        # Extract high-priority recommendations
+        high_priority = [rec for rec in recommendations if rec.get('priority') == 'high']
+        for rec in high_priority[:3]:  # Top 3
+            action = rec.get('action', rec.get('recommended_action', ''))
+            if action:
+                next_steps.append(action)
+        
+        # Add medium priority if we don't have enough
+        if len(next_steps) < 3:
+            medium_priority = [rec for rec in recommendations if rec.get('priority') == 'medium']
+            for rec in medium_priority[:3-len(next_steps)]:
+                action = rec.get('action', rec.get('recommended_action', ''))
+                if action:
+                    next_steps.append(action)
+        
+        # Default next step
+        if not next_steps:
+            next_steps.append("Continue learning and capturing content")
+        
+        return next_steps
+
+    def _count_executed_nodes(self, shared_state: Dict[str, Any]) -> int:
+        """Count how many pipeline nodes were executed"""
+        executed_nodes = 0
+        
+        if shared_state.get('raw_captures'):
+            executed_nodes += 1  # Capture ingestion
+        if shared_state.get('extracted_concepts'):
+            executed_nodes += 1  # Content analysis
+        if shared_state.get('knowledge_graph'):
+            executed_nodes += 1  # Knowledge graph
+        if shared_state.get('historical_connections'):
+            executed_nodes += 1  # Historical analysis
+        if shared_state.get('notion_generation'):
+            executed_nodes += 1  # Notion generation
+        
+        return executed_nodes
+
+    def get_pipeline_status(self) -> Dict[str, Any]:
+        """Get pipeline status"""
+        return {
+            'status': 'operational',
+            'version': '1.1.0-decoupled',
+            'input_format': 'minimal_capture',
+            'required_fields': ['content', 'user_id'],
+            'optional_fields': ['source_url', 'title', 'timestamp', 'intent', 'user_note'],
+            'supported_intents': ['learn', 'research', 'reference', 'archive'],
+            'max_captures_per_session': 100,
+            'estimated_processing_time': '30-60 seconds'
+        }
+
+
+if __name__ == "__main__":
+    # Example of minimal input format
+    minimal_captures = [
+        {
+            "content": "Machine learning is a subset of artificial intelligence that focuses on algorithms that can learn from data without being explicitly programmed.",
+            "user_id": "researcher_123",
+            "source_url": "https://example.com/ml-intro",
+            "title": "Introduction to Machine Learning",
+            "intent": "learn"
+        },
+        {
+            "content": "Deep learning uses neural networks with multiple layers to model and understand complex patterns in data.",
+            "user_id": "researcher_123", 
+            "source_url": "https://example.com/deep-learning",
+            "title": "Deep Learning Basics",
+            "intent": "research",
+            "user_note": "Important for my AI project"
+        }
+    ]
+    
+    orchestrator = PipelineOrchestrator()
+    
+    try:
+        results = orchestrator.run_pipeline(minimal_captures)
+        
+        print("✅ Pipeline execution completed!")
+        print(f"   Status: {results['status']}")
+        print(f"   Captures processed: {results['summary']['captures_processed']}")
+        print(f"   Concepts extracted: {results['summary']['concepts_extracted']}")
+        print(f"   Session theme: {results['learning_analysis']['session_theme']}")
+        print(f"   Processing time: {results['processing_time']:.2f} seconds")
+        
+        if results['outputs']['notion_page_created']:
+            print(f"   Notion page: {results['outputs']['notion_page_url']}")
+        
+        print(f"\n🎯 Next steps:")
+        for step in results['knowledge_insights']['next_steps']:
+            print(f"   - {step}")
+            
+    except Exception as e:
+        print(f"❌ Pipeline failed: {e}")
