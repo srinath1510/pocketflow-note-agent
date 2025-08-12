@@ -204,16 +204,33 @@ class ContentAnalysisNode(BaseNode):
         shared_state['content_analysis'] = exec_result.get('content_analysis', {})
 
         batch_metrics = exec_result.get('batch_metrics', {})
+        
 
         if batch_metrics:
             shared_state['batch_metrics'] = batch_metrics
-            self.logger.info(f"🔍 Added batch_metrics to shared_state: {batch_metrics}")
-
             shared_state.setdefault('pipeline_metadata', {})
             shared_state['pipeline_metadata']['batch_optimization_metrics'] = batch_metrics
-            self.logger.info(f"🔍 Added batch_metrics to pipeline_metadata")
+
+            api_calls_saved = batch_metrics.get('api_calls_saved', 0)
+            cache_hit_rate = batch_metrics.get('cache_hit_rate', 0)
+            total_processed = batch_metrics.get('total_captures_processed', 0)
+
+            self.logger.info(f"🔍 ✅ BATCH METRICS SUCCESSFULLY ADDED:")
+            self.logger.info(f"   → API calls saved: {api_calls_saved}")
+            self.logger.info(f"   → Cache hit rate: {cache_hit_rate:.1f}%")
+            self.logger.info(f"   → Total captures processed: {total_processed}")
+            self.logger.info(f"   → Stored in shared_state['batch_metrics']")
+            self.logger.info(f"   → Stored in shared_state['pipeline_metadata']['batch_optimization_metrics']")
+
+            print(f"🎉 BATCH OPTIMIZATION SUCCESS IN CONTENT ANALYSIS:")
+            print(f"   API Calls Saved: {api_calls_saved}")
+            print(f"   Cache Hit Rate: {cache_hit_rate:.1f}%")
+            print(f"   Method Breakdown: {batch_metrics.get('method_breakdown', {})}")
+ 
         else:
             self.logger.warning("⚠️  No batch_metrics found in exec_result")
+            self.logger.error(f"   Available exec_result keys: {list(exec_result.keys())}")
+
             default_batch_metrics = {
                 'api_calls_made': 0,
                 'api_calls_saved': 0,
@@ -225,6 +242,8 @@ class ContentAnalysisNode(BaseNode):
             }
             shared_state['batch_metrics'] = default_batch_metrics
             shared_state['pipeline_metadata']['batch_optimization_metrics'] = default_batch_metrics
+
+            self.logger.warning(f"🔧 CREATED DEFAULT batch_metrics to prevent failures")
 
 
         concepts = exec_result.get('extracted_concepts', {})
@@ -238,11 +257,19 @@ class ContentAnalysisNode(BaseNode):
             'llm_provider': prep_result.get('llm_provider', 'unknown')
         }
 
-        api_calls_saved = batch_metrics.get('api_calls_saved', 0)
         shared_state['pipeline_metadata']['content_analysis_summary'] = processing_summary
         shared_state['pipeline_metadata']['content_analysis_end'] = datetime.now(timezone.utc).isoformat()
         
-        self.logger.info(f"Content analysis complete - API calls saved: {api_calls_saved}")
+        final_batch_metrics = shared_state.get('batch_metrics', {})
+        api_calls_saved = final_batch_metrics.get('api_calls_saved', 0)
+    
+        if api_calls_saved > 0:
+            self.logger.info(f"✅ Content analysis complete - API calls saved: {api_calls_saved}")
+            print(f"✅ CONTENT ANALYSIS POST COMPLETE - {api_calls_saved} API calls saved!")
+        else:
+            self.logger.warning(f"⚠️  Content analysis complete but no API call savings detected")
+            print(f"⚠️  CONTENT ANALYSIS POST COMPLETE - No API call savings detected")
+    
         return "default"
 
     
@@ -625,10 +652,12 @@ class ContentAnalysisNode(BaseNode):
         
          # Calculate actual API calls
         if llm_batch_captures > 0:
-            # API calls = number of batches needed for LLM processing
             api_calls_made = (llm_batch_captures + self.batch_size - 1) // self.batch_size
+            api_calls_made += 1  # Add synthesis call
+            self.logger.info(f"   API calls made: {api_calls_made} (including synthesis)")
         else:
             api_calls_made = 0
+            self.logger.info(f"   API calls made: 0 (no LLM processing needed)")
         
         # Add synthesis call if we processed any captures with LLM
         if llm_batch_captures > 0:
@@ -668,6 +697,18 @@ class ContentAnalysisNode(BaseNode):
                 'rule_based': rule_based_captures
             }
         }
+
+        self.logger.info(f"🔍 FINAL BATCH METRICS CREATED:")
+        self.logger.info(f"   API calls saved: {api_calls_saved}")
+        self.logger.info(f"   Reduction: {reduction_percent:.1f}%")
+        self.logger.info(f"   Cache hit rate: {cache_hit_rate:.1f}%")
+    
+        print(f"📊 BATCH METRICS FINAL CALCULATION:")
+        print(f"   API Calls Made: {api_calls_made}")
+        print(f"   API Calls Saved: {api_calls_saved}")
+        print(f"   Reduction: {reduction_percent:.1f}%")
+        print(f"   Cache Hit Rate: {cache_hit_rate:.1f}%")
+        
         # Build final extracted_concepts structure
         extracted_concepts = {
             'learning_concepts': unique_concepts,
