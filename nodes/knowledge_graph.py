@@ -242,13 +242,14 @@ class KnowledgeGraphNode(BaseNode):
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (u:User {id: $user_id})
-                CREATE (s:Session {
-                    id: $session_id,
-                    theme: $theme,
-                    created_at: datetime($timestamp),
-                    user_id: $user_id
-                })
-                CREATE (u)-[:HAS_SESSION]->(s)
+                MERGE (s:Session {id: $session_id})
+                ON CREATE SET 
+                    s.theme = $theme,
+                    s.created_at = datetime($timestamp),
+                    s.user_id = $user_id
+                ON MATCH SET
+                    s.last_updated = datetime($timestamp)
+                MERGE (u)-[:HAS_SESSION]->(s)
                 RETURN s.id as session_id
             """, user_id=user_id, session_id=session_id, theme=theme, timestamp=timestamp)
             

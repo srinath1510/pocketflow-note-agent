@@ -421,8 +421,7 @@ class ContentAnalysisNode(BaseNode):
         batch_prompt = self._create_batch_prompt(batch)
         
         messages = [
-            {"role": "system", "content": "You are an expert at analyzing educational content in batches. "
-                                         "Always return valid JSON with analysis for each capture in the batch."},
+            {"role": "system", "content": self._get_analysis_system_message('batch_analysis')},
             {"role": "user", "content": batch_prompt}
         ]
         
@@ -440,15 +439,15 @@ class ContentAnalysisNode(BaseNode):
         for i, (capture, analysis) in enumerate(zip(batch, batch_analysis.get('analyses', []))):
             processed_analysis = {
                 'capture_id': capture.get('id', f'batch_capture_{i}'),
-                'learning_concepts': analysis.get('learning_concepts', []),
+                'learning_concepts': analysis.get('core_concepts', []),
                 'key_terms': analysis.get('key_terms', {}),
                 'entities': analysis.get('entities', {}),
                 'methodologies': analysis.get('methodologies', []),
-                'skills': analysis.get('skills', []),
-                'complexity': analysis.get('complexity', 'intermediate'),
-                'prerequisites': analysis.get('prerequisites', []),
-                'learning_type': analysis.get('learning_type', 'explanation'),
-                'actionable_items': analysis.get('actionable_items', []),
+                'skills': analysis.get('learning_objectives', []),
+                'complexity': analysis.get('complexity_level', 'intermediate'),
+                'prerequisites': analysis.get('prerequisite_knowledge', []),
+                'learning_type': analysis.get('content_type', 'explanation'),
+                'actionable_items': analysis.get('practical_applications', []), 
                 'main_topic': analysis.get('main_topic', 'unknown'),
                 'processing_method': 'llm_batch',
                 'url': capture.get('url', ''),
@@ -473,31 +472,38 @@ class ContentAnalysisNode(BaseNode):
             CONTENT: {content_preview}
             ---""")
         
-        return f"""Analyze these {len(batch)} learning captures together for efficiency:
+        return f"""You are analyzing {len(batch)} learning materials to extract educational insights that help someone build knowledge and skills.
 
-        {chr(10).join(batch_content)}
-            
-        For each capture, extract learning information and return as JSON:
+    {chr(10).join(batch_content)}
 
-        {{
+    For each capture, focus on what someone could LEARN and APPLY. Extract:
+
+    {{
         "analyses": [
             {{
-            "learning_concepts": ["concept1", "concept2"],
-            "key_terms": {{"term": "definition"}},
+            "core_concepts": ["fundamental concept 1", "key concept 2", "important principle 3"],
+            "key_terms": {{"technical_term": "clear, learner-friendly definition"}},
+            "learning_objectives": ["specific skill you can develop", "knowledge you can gain"],
+            "complexity_level": "beginner|intermediate|advanced|expert",
+            "content_type": "tutorial|explanation|documentation|example|theory|practical",
+            "practical_applications": ["how to use this knowledge", "where to apply these skills"],
+            "prerequisite_knowledge": ["what to learn first", "foundational concepts needed"],
+            "key_insights": ["main takeaway", "important understanding"],
+            "main_topic": "primary subject area",
             "entities": {{"name": "type"}},
-            "methodologies": ["approach1"],
-            "skills": ["skill1"],
-            "complexity": "beginner|intermediate|advanced|expert",
-            "prerequisites": ["prereq1"],
-            "learning_type": "tutorial|explanation|documentation|example|theory|practical",
-            "actionable_items": ["action1"],
-            "main_topic": "primary_subject"
+            "methodologies": ["approach", "technique", "method"]
             }},
-            // ... analysis for each capture
+            // ... repeat for each capture
         ]
-        }}
+    }}
 
-        Focus on educational value and learning concepts. Return valid JSON only."""
+    FOCUS ON:
+    - Concepts that build understanding and capability
+    - Knowledge that transfers to real applications  
+    - Skills someone can develop and practice
+    - Clear definitions that aid comprehension
+
+    Return only valid JSON. Be specific and actionable."""
 
     
     def _synthesize_across_all_captures(self, all_results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -575,29 +581,37 @@ class ContentAnalysisNode(BaseNode):
             unique_topics = list(set(all_topics))
             primary_complexity = max(set(all_complexity_levels), key=all_complexity_levels.count)
             
-            prompt = f"""Analyze this complex learning session with multiple concepts and topics:
+            prompt = f"""You are analyzing a comprehensive learning session to identify the knowledge journey and skill development path.
 
-    CONCEPTS LEARNED: {', '.join(unique_concepts[:15])}
-    TOPICS COVERED: {', '.join(unique_topics)}
-    SESSION COMPLEXITY: {primary_complexity}
-    TOTAL CAPTURES: {len(all_results)}
+SESSION DATA:
+- Key concepts mastered: {', '.join(unique_concepts[:12])}
+- Subject areas covered: {', '.join(unique_topics)}
+- Learning complexity: {primary_complexity}
+- Total materials: {len(all_results)}
 
-    Synthesize the session and return JSON:
-    {{
-        "session_learning_theme": "primary_unified_theme",
-        "knowledge_progression": ["concept1", "concept2", "concept3"],
-        "learning_path": ["logical_step1", "logical_step2", "logical_step3"],
-        "session_complexity": "beginner|intermediate|advanced|expert",
-        "learning_goals": ["specific_goal1", "specific_goal2"],
-        "next_steps": ["actionable_step1", "actionable_step2"],
-        "concept_connections": {{"concept1": ["related1", "related2"]}},
-        "synthesis_method": "llm_complex"
-    }}
+Create a learning synthesis that shows HOW these concepts build knowledge:
 
-    Focus on the learning journey and concept relationships. Return valid JSON only."""
+{{
+    "session_learning_theme": "descriptive theme that captures the learning journey",
+    "knowledge_progression": ["foundational concept", "building concept", "advanced concept"],
+    "learning_path": ["logical step 1", "logical step 2", "logical step 3"],
+    "session_complexity": "beginner|intermediate|advanced|expert",
+    "learning_goals": ["specific capability 1", "specific capability 2"],
+    "next_steps": ["concrete action 1", "concrete action 2", "concrete action 3"],
+    "concept_connections": {{"concept1": ["directly_related1", "builds_to2"]}},
+    "synthesis_method": "llm_complex"
+}}
+
+REQUIREMENTS:
+- Learning goals should be specific capabilities, not vague statements
+- Next steps must be concrete actions someone can take
+- Concept connections should show how ideas build on each other
+- Focus on the intellectual journey and skill development
+
+Return valid JSON only."""
 
             messages = [
-                {"role": "system", "content": "You are an expert learning session synthesizer. Return only valid JSON."},
+                {"role": "system", "content": self._get_analysis_system_message('session_synthesis')},
                 {"role": "user", "content": prompt}
             ]
             
@@ -774,16 +788,39 @@ class ContentAnalysisNode(BaseNode):
         # Simple concept extraction - can be enhanced
         concepts = []
         
-        # Look for capitalized terms (potential concepts)
-        concept_patterns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', content)
-        concepts.extend([concept for concept in concept_patterns if len(concept.split()) <= 3])
+        content_lower = content.lower()
+    
+        # Learning-specific concept patterns
+        learning_patterns = [
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+(?:is|are|means|refers to)',  # Definitions
+            r'(?:concept of|principle of|theory of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})',  # Named concepts
+            r'(?:understanding|learning|mastering)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})',  # Learning targets
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+(?:algorithm|method|technique|approach)',  # Technical concepts
+            r'(?:key|important|fundamental|core)\s+([a-z]+(?:\s+[a-z]+){0,2})',  # Emphasized concepts
+        ]
         
-        # Look for quoted terms
+        for pattern in learning_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            concepts.extend([match.strip() for match in matches if len(match.split()) <= 3])
+        
+        # Look for quoted important terms
         quoted_terms = re.findall(r'"([^"]+)"', content)
         concepts.extend([term for term in quoted_terms if len(term.split()) <= 3])
         
-        return list(set(concepts))[:10]  # Limit and deduplicate
-    
+        # Look for capitalized technical terms
+        tech_terms = re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)*\b', content)
+        concepts.extend([term for term in tech_terms if len(term) > 3 and len(term) < 20])
+        
+        # Clean and deduplicate
+        cleaned_concepts = []
+        for concept in concepts:
+            clean = concept.strip().title()
+            if clean and len(clean) > 2 and clean not in cleaned_concepts:
+                cleaned_concepts.append(clean)
+        
+        return cleaned_concepts[:12]  # Return top 12 concepts
+        
+
     def _extract_entities_rules(self, content: str) -> Dict[str, str]:
         """Extract entities using simple patterns"""
         entities = {}
@@ -805,9 +842,26 @@ class ContentAnalysisNode(BaseNode):
         terms = {}
         
         # Look for definition patterns: "X is/means/refers to Y"
-        definitions = re.findall(r'(\w+(?:\s+\w+)*)\s+(?:is|means|refers to)\s+([^.!?]+)', content, re.IGNORECASE)
-        for term, definition in definitions[:5]:  # Limit to 5
-            terms[term.strip()] = definition.strip()
+        definition_patterns = [
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+is\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+means\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+refers to\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*:\s*([^.!?]+)',  # Colon definitions
+            r'The term\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+can be defined as\s+([^.!?]+)',
+        ]
+        
+        for pattern in definition_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for term, definition in matches:
+                if len(term.split()) <= 3 and len(definition) > 10:  # Quality filter
+                    clean_term = term.strip().title()
+                    clean_def = definition.strip().capitalize()
+                    if clean_term and clean_def:
+                        terms[clean_term] = clean_def
+                    
+                    if len(terms) >= 8:  # Limit to most important terms
+                        break
         
         return terms
     
@@ -815,15 +869,33 @@ class ContentAnalysisNode(BaseNode):
         """Assess content complexity using simple heuristics"""
         word_count = len(content.split())
         
-        # Count technical indicators
-        technical_patterns = [r'\b\w{10,}\b', r'\$[^$]+\$', r'```', r'<code>', r'\([A-Z][a-z]+\s+et\s+al\.\)']
+        # Learning complexity indicators
+        beginner_indicators = ['introduction', 'basics', 'getting started', 'overview', 'simple']
+        intermediate_indicators = ['implementation', 'practical', 'application', 'building']
+        advanced_indicators = ['optimization', 'architecture', 'advanced', 'performance', 'scaling']
+        expert_indicators = ['research', 'theoretical', 'novel', 'cutting-edge', 'paradigm']
+    
+        content_lower = content.lower()
+    
+        # Count complexity indicators
+        beginner_score = sum(1 for term in beginner_indicators if term in content_lower)
+        intermediate_score = sum(1 for term in intermediate_indicators if term in content_lower)
+        advanced_score = sum(1 for term in advanced_indicators if term in content_lower)
+        expert_score = sum(1 for term in expert_indicators if term in content_lower)
+    
+        # Technical depth indicators
+        technical_patterns = [r'\b\w{12,}\b', r'[A-Z]{3,}', r'[\w\-]+\(\)', r'[a-z]+\.[a-z]+']
         technical_score = sum(len(re.findall(pattern, content)) for pattern in technical_patterns)
-        
-        if word_count < 200 and technical_score < 3:
-            return 'beginner'
-        elif word_count > 1000 or technical_score > 10:
+    
+        # Math/formula indicators
+        math_score = len(re.findall(r'[\+\-\*/=<>∑∏∫∆]|\b(?:equation|formula|algorithm)\b', content))
+    
+        # Combine indicators
+        if expert_score > 0 or (advanced_score > 2 and technical_score > 20):
+            return 'expert'
+        elif advanced_score > 0 or (intermediate_score > 2 and technical_score > 10):
             return 'advanced'
-        elif technical_score > 5:
+        elif intermediate_score > 0 or (word_count > 500 and technical_score > 5):
             return 'intermediate'
         else:
             return 'beginner'
@@ -851,58 +923,33 @@ class ContentAnalysisNode(BaseNode):
         return batch_calls + synthesis_calls
 
 
-    def _llm_synthesize_complex_session(self, all_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Use LLM to synthesize complex multi-topic sessions"""
-        
-        if not self.llm_client or not self.llm_client.is_available():
-            return self._rule_based_synthesis([], ['general'], 'intermediate')
-        
-        # Extract key data for synthesis
-        all_concepts = []
-        all_topics = []
-        
-        for result in all_results:
-            all_concepts.extend(result.get('learning_concepts', []))
-            all_topics.append(result.get('main_topic', 'unknown'))
-        
-        # Create synthesis prompt
-        prompt = f"""Analyze this learning session with multiple concepts: {', '.join(all_concepts[:10])}
-
-    The session covered these topics: {', '.join(set(all_topics))}
-
-    Synthesize the session and return JSON:
-    {{
-    "session_learning_theme": "primary_theme",
-    "knowledge_progression": ["concept1", "concept2", "concept3"],
-    "learning_path": ["step1", "step2", "step3"],
-    "session_complexity": "beginner|intermediate|advanced",
-    "learning_goals": ["goal1", "goal2"],
-    "next_steps": ["action1", "action2"],
-    "concept_connections": {{"concept1": ["related1", "related2"]}},
-    "synthesis_method": "llm_complex"
-    }}
-
-    Focus on the learning journey and concept relationships. Return valid JSON only."""
-
-        try:
-            messages = [
-                {"role": "system", "content": "You are an expert learning session synthesizer. Return only valid JSON."},
-                {"role": "user", "content": prompt}
-            ]
-            
-            request_params = self.llm_client.set_provider_specific_defaults(
-                temperature=0.3,
-                max_tokens=800
-            )
-            
-            response_text = self.llm_client.chat_completion(messages, **request_params)
-            synthesis_result = json.loads(response_text)
-            
-            return synthesis_result
-            
-        except Exception as e:
-            self.logger.warning(f"LLM synthesis failed: {str(e)}, falling back to rule-based")
-            return self._rule_based_synthesis(all_concepts, list(set(all_topics)), 'intermediate')
-
+    def _get_analysis_system_message(self, analysis_type: str) -> str:
+        """Get specific system message for different analysis types"""
     
+        system_messages = {
+            'batch_analysis': """You are an expert educational content analyzer specializing in extracting learning insights from diverse materials.
+
+Your expertise:
+- Identifying core concepts that build foundational understanding
+- Recognizing learning objectives and skill development opportunities  
+- Assessing complexity levels for different learner backgrounds
+- Extracting practical applications and real-world connections
+- Creating clear, learner-friendly definitions of technical terms
+
+Always focus on what someone can learn, understand, and apply. Prioritize educational value over surface-level content analysis.""",
+
+        'session_synthesis': """You are an expert learning session synthesizer who creates coherent knowledge journeys from educational content.
+
+Your expertise:
+- Identifying how concepts build upon each other in logical progression
+- Creating meaningful learning pathways that connect disparate topics
+- Recognizing knowledge gaps and prerequisite relationships
+- Designing actionable next steps that advance learning goals
+- Synthesizing multi-topic sessions into unified learning themes
+
+Focus on the learner's intellectual journey: how concepts connect, what capabilities they're building, and how to continue learning effectively."""
+    }
     
+        return system_messages.get(analysis_type, system_messages['batch_analysis'])
+        
+        

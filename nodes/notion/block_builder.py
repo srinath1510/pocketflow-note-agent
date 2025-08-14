@@ -226,24 +226,24 @@ class NotionBlockBuilder:
         
         if self.llm_client and self.llm_client.is_available():
             try:
-                curiosity_prompt = f"""Generate 3-4 natural questions that would arise after learning about: {', '.join(concepts[:8])}
+                curiosity_prompt = f"""Generate 4 specific follow-up questions for: {', '.join(concepts[:8])}
 
-    Questions should:
-    - Show intellectual curiosity
-    - Point toward deeper exploration  
-    - Connect to practical applications
-    - Drive continued learning
+Questions must:
+- Be specific and actionable
+- Point to practical applications
+- Drive deeper learning
+- Be answerable through research
 
-    Return as simple list of questions."""
+Return only the questions, one per line."""
 
                 messages = [
-                    {"role": "system", "content": "Generate thought-provoking questions that drive continued learning."},
+                    {"role": "system", "content": "Generate specific, actionable follow-up questions that drive practical learning."},
                     {"role": "user", "content": curiosity_prompt}
                 ]
-                
+                    
                 request_params = self.llm_client.set_provider_specific_defaults(temperature=0.3, max_tokens=300)
                 response_text = self.llm_client.chat_completion(messages, **request_params)
-                
+                    
                 # Parse questions from response
                 questions = [q.strip('- ').strip() for q in response_text.split('\n') if q.strip() and '?' in q]
                 
@@ -616,14 +616,28 @@ class NotionBlockBuilder:
     def _generate_basic_curiosity_questions(self, concepts: List[str]) -> List[str]:
         """Generate basic curiosity questions when LLM unavailable"""
         if not concepts:
-            return ["What should I explore next?", "How can I apply this knowledge?"]
+            return [
+                "What should I explore next?", 
+                "How can I apply this knowledge?",
+                "What problems can this solve?",
+                "Where is this used in practice?"
+            ]
         
-        return [
-            f"How does {concepts[0]} work in real-world applications?",
-            f"What are the limitations of {concepts[1] if len(concepts) > 1 else concepts[0]}?",
-            f"How do these concepts connect to other fields I'm interested in?",
-            "What problems can I solve with this new knowledge?"
-        ]
+        questions = []
+        for concept in concepts[:2]:  # Use first 2 concepts
+            questions.extend([
+                f"How is {concept} applied in industry?",
+                f"What are the limitations of {concept}?"
+            ])
+        
+        # Add general questions if we need more
+        if len(questions) < 4:
+            questions.extend([
+                "What problems can I solve with this knowledge?",
+                "How do these concepts connect to my goals?"
+            ])
+        
+        return questions[:4]
     
     # Helper methods
     def _get_topic_visual_theme(self, topic_name: str) -> tuple:
