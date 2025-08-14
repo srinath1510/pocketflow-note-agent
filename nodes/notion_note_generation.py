@@ -136,7 +136,14 @@ class NotionNoteGenerationNode(BaseNode):
             # Step 1: Ensure enhanced databases exist
             databases = self.database_manager.ensure_enhanced_databases_exist()
             
-            # Step 2: Create topic pages (one per topic)
+            # Step 2: Create content pages
+            content_pages = self.page_builder.create_content_pages(
+                pipeline_data['raw_captures'],
+                databases['captured_content'],
+                topic_organization
+            )
+            
+            # Step 3: Create topic pages (one per topic)
             topic_pages = {}
             for topic_name, enhanced_topic_data in topic_organization.items():
                 rich_content = enhanced_topic_data.get('rich_content', {})
@@ -157,25 +164,26 @@ class NotionNoteGenerationNode(BaseNode):
                         topic_name, 
                         enhanced_topic_data, 
                         pipeline_data, 
+                        content_pages,
                         color_theme
                     )
                     topic_pages[topic_name] = topic_page
             
-            # Step 3: Create enhanced concept library entries
+            # Step 4: Create enhanced concept library entries
             concept_entries = self.page_builder.create_enhanced_concept_library_entries(
                 pipeline_data['extracted_concepts'], 
                 databases['concept_library'], 
                 topic_organization
             )
             
-            # Step 4: Enhanced synthesis
+            # Step 5: Enhanced synthesis
             synthesis_insights = self.content_enhancer._create_master_session_synthesis(
                 topic_organization, 
                 {},
                 pipeline_data
             )
             
-            # Step 5: Enhanced master page
+            # Step 6: Enhanced master page
             master_session_page = self.page_builder.create_enhanced_master_session_page(
                 session_metadata, 
                 pipeline_data, 
@@ -194,7 +202,7 @@ class NotionNoteGenerationNode(BaseNode):
                     topic_pages
                 )
             
-            # Step 6: Update database relationships
+            # Step 7: Update database relationships
             self.page_builder.update_enhanced_database_relationships(
                 databases, topic_pages, concept_entries, master_session_page
             )
@@ -202,12 +210,14 @@ class NotionNoteGenerationNode(BaseNode):
             return {
                 'master_session_page': master_session_page,
                 'topic_pages': topic_pages,
+                'content_pages': content_pages,
                 'concept_entries': concept_entries,
                 'synthesis_insights': synthesis_insights,
                 'databases': databases,
                 'creation_summary': {
                     'session_created': bool(master_session_page),
                     'topic_pages_created': len(topic_pages),
+                    'content_pages_created': len(content_pages),
                     'concepts_created': len(concept_entries),
                     'sources_created': len(pipeline_data['raw_captures']),
                     'total_pages': 1 + len(topic_pages) + len(concept_entries),
