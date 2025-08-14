@@ -525,6 +525,11 @@ class TestCompletePipeline:
                 'spark': 'curiosity'
             }
             mock_enhancer._create_master_session_synthesis.return_value = mock_llm_responses['notion_session_synthesis']
+
+            mock_page_builder.create_content_pages.return_value = [
+                {'id': 'content_123', 'properties': {'Content Title': {'title': [{'plain_text': 'ML Intro'}]}}},
+                {'id': 'content_456', 'properties': {'Content Title': {'title': [{'plain_text': 'Neural Networks'}]}}}
+            ]
             
             # Run complete pipeline
             result = pipeline.run(sample_learning_session)
@@ -572,6 +577,13 @@ class TestCompletePipeline:
             notion = result['notion_generation']
             assert 'master_session_url' in notion
             assert 'creation_summary' in notion
+
+            # Verify content database results
+            notion = result['notion_generation']
+            assert 'content_pages' in notion
+            creation_summary = notion['creation_summary']
+            assert 'content_pages_created' in creation_summary
+            assert creation_summary['content_pages_created'] > 0
 
     def test_pipeline_error_handling(self, mock_environment):
         """Test pipeline handles errors gracefully"""
