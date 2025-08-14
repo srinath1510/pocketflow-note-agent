@@ -44,35 +44,58 @@ class TopicOrganizer:
             # Prepare content for analysis
             content_summary = self._prepare_content_for_clustering(captures, learning_concepts)
             
-            clustering_prompt = f"""
-            Analyze this learning session and identify 3-7 distinct, coherent research topics:
-            
-            LEARNING CONCEPTS: {', '.join(learning_concepts[:15])}
-            
-            CONTENT SOURCES: 
-            {content_summary}
-            
-            For each topic, provide:
+            clustering_prompt = f"""Analyze this learning session to identify 2-5 coherent learning topics that group related concepts and materials logically.
+
+    LEARNING CONCEPTS DISCOVERED: {', '.join(learning_concepts[:15])}
+
+    CONTENT SOURCES:
+    {content_summary}
+
+    Create learning-focused topic clusters. For each topic, provide:
+
+    {{
+        "topics": [
             {{
-                "topic_name": "Clear, descriptive name",
-                "scope": "What this topic encompasses", 
+                "topic_name": "Clear, descriptive learning topic name",
+                "scope": "What knowledge domain this covers and why concepts belong together", 
                 "complexity_level": "beginner|intermediate|advanced|expert",
-                "learning_objectives": ["specific objective 1", "objective 2", "objective 3"],
-                "prerequisite_topics": ["prerequisite 1", "prerequisite 2"],
-                "related_concepts": ["concept from the list above"],
+                "learning_objectives": ["specific skill learner will gain", "knowledge they'll understand", "capability they'll develop"],
+                "prerequisite_knowledge": ["foundational concept needed", "prior knowledge required"],
+                "related_concepts": ["concept from above list that belongs in this topic"],
+                "learning_progression": ["foundational concept", "building concept", "advanced concept"],
+                "practical_value": "How this knowledge applies in real situations",
                 "confidence": 0.0-1.0
             }}
-            
-            Group concepts and sources logically. Ensure topics are:
-            - Semantically coherent (concepts naturally belong together)
-            - Appropriately scoped (not too broad or narrow)
-            - Build logical learning progression
-            
-            Return JSON: {{"topics": [topic_objects]}}
-            """
-            
+        ]
+    }}
+
+    CLUSTERING REQUIREMENTS:
+    - Topics should represent distinct learning domains or skill areas
+    - Concepts within each topic should naturally build upon each other
+    - Each topic should offer clear learning value and practical application
+    - Group related concepts that a learner would study together
+    - Ensure topics have appropriate scope (not too broad or narrow)
+    - Focus on educational coherence over arbitrary content grouping
+
+    QUALITY STANDARDS:
+    - Learning objectives must be specific and actionable
+    - Topic names should clearly indicate what someone will learn
+    - Scope should explain the educational rationale for grouping
+    - Practical value should show real-world application
+
+    Return only valid JSON."""
+
             messages = [
-                {"role": "system", "content": "You are an expert learning architect who creates coherent topic clusters for optimal learning."},
+                {"role": "system", "content": """You are an expert learning architect who specializes in organizing educational content into coherent learning pathways.
+
+    Your expertise:
+    - Identifying natural learning progressions and concept dependencies
+    - Creating topic clusters that maximize educational coherence
+    - Recognizing how concepts build upon each other within domains
+    - Designing learning objectives that lead to practical capabilities
+    - Understanding prerequisite relationships and knowledge scaffolding
+
+    Focus on educational value: group concepts that learners would naturally study together to build comprehensive understanding in specific domains."""},
                 {"role": "user", "content": clustering_prompt}
             ]
             
@@ -121,7 +144,7 @@ class TopicOrganizer:
             # Match captures by content similarity
             topic_keywords = topic_name.lower().split() + [c.lower() for c in related_concepts]
             
-            for capture in captures:
+            for capture in captures: 
                 content = (capture.get('content', '') + ' ' + capture.get('title', '')).lower()
                 if any(keyword in content for keyword in topic_keywords):
                     topic_captures.append(capture)
