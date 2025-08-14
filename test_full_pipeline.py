@@ -861,7 +861,40 @@ class TestPipelineComponents:
             )
             
             assert len(content_pages) == 4
+
+    
+    def test_topic_pages_include_full_content(self, mock_environment, sample_learning_session, mock_notion_api):
+        """Test topic pages now include full content sections"""
+        from nodes.notion.block_builder import NotionBlockBuilder
+        from nodes.notion.client import NotionClient
+        
+        with patch('nodes.notion.client.requests') as mock_requests:
+            mock_requests.patch.return_value.status_code = 200
             
+            client = NotionClient()
+            builder = NotionBlockBuilder(client)
+            
+            topic_data = {
+                'captures': sample_learning_session[:2],
+                'rich_content': {'learning_story': 'test story'}
+            }
+            
+            content_pages = [{'id': 'content_123', 'properties': {'Content Title': {'title': [{'plain_text': 'ML Intro'}]}}}]
+            
+            # Should not raise errors
+            builder.add_rich_topic_content_with_sources(
+                'page_123',
+                'Machine Learning', 
+                topic_data,
+                {'extracted_concepts': {}},
+                content_pages,
+                'blue'
+            )
+            
+            # Verify content blocks were added
+            mock_requests.patch.assert_called()
+                
+
 
 
 def test_main_pipeline_cli():
