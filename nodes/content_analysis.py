@@ -421,8 +421,7 @@ class ContentAnalysisNode(BaseNode):
         batch_prompt = self._create_batch_prompt(batch)
         
         messages = [
-            {"role": "system", "content": "You are an expert at analyzing educational content in batches. "
-                                         "Always return valid JSON with analysis for each capture in the batch."},
+            {"role": "system", "content": self._create_learning_focused_prompt_prefix()},
             {"role": "user", "content": batch_prompt}
         ]
         
@@ -473,31 +472,38 @@ class ContentAnalysisNode(BaseNode):
             CONTENT: {content_preview}
             ---""")
         
-        return f"""Analyze these {len(batch)} learning captures together for efficiency:
+        return f"""You are analyzing {len(batch)} learning materials to extract educational insights that help someone build knowledge and skills.
 
-        {chr(10).join(batch_content)}
-            
-        For each capture, extract learning information and return as JSON:
+    {chr(10).join(batch_content)}
 
-        {{
+    For each capture, focus on what someone could LEARN and APPLY. Extract:
+
+    {{
         "analyses": [
             {{
-            "learning_concepts": ["concept1", "concept2"],
-            "key_terms": {{"term": "definition"}},
+            "core_concepts": ["fundamental concept 1", "key concept 2", "important principle 3"],
+            "key_terms": {{"technical_term": "clear, learner-friendly definition"}},
+            "learning_objectives": ["specific skill you can develop", "knowledge you can gain"],
+            "complexity_level": "beginner|intermediate|advanced|expert",
+            "content_type": "tutorial|explanation|documentation|example|theory|practical",
+            "practical_applications": ["how to use this knowledge", "where to apply these skills"],
+            "prerequisite_knowledge": ["what to learn first", "foundational concepts needed"],
+            "key_insights": ["main takeaway", "important understanding"],
+            "main_topic": "primary subject area",
             "entities": {{"name": "type"}},
-            "methodologies": ["approach1"],
-            "skills": ["skill1"],
-            "complexity": "beginner|intermediate|advanced|expert",
-            "prerequisites": ["prereq1"],
-            "learning_type": "tutorial|explanation|documentation|example|theory|practical",
-            "actionable_items": ["action1"],
-            "main_topic": "primary_subject"
+            "methodologies": ["approach", "technique", "method"]
             }},
-            // ... analysis for each capture
+            // ... repeat for each capture
         ]
-        }}
+    }}
 
-        Focus on educational value and learning concepts. Return valid JSON only."""
+    FOCUS ON:
+    - Concepts that build understanding and capability
+    - Knowledge that transfers to real applications  
+    - Skills someone can develop and practice
+    - Clear definitions that aid comprehension
+
+    Return only valid JSON. Be specific and actionable."""
 
     
     def _synthesize_across_all_captures(self, all_results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -575,29 +581,37 @@ class ContentAnalysisNode(BaseNode):
             unique_topics = list(set(all_topics))
             primary_complexity = max(set(all_complexity_levels), key=all_complexity_levels.count)
             
-            prompt = f"""Analyze this complex learning session with multiple concepts and topics:
+            prompt = f"""You are analyzing a comprehensive learning session to identify the knowledge journey and skill development path.
 
-    CONCEPTS LEARNED: {', '.join(unique_concepts[:15])}
-    TOPICS COVERED: {', '.join(unique_topics)}
-    SESSION COMPLEXITY: {primary_complexity}
-    TOTAL CAPTURES: {len(all_results)}
+SESSION DATA:
+- Key concepts mastered: {', '.join(unique_concepts[:12])}
+- Subject areas covered: {', '.join(unique_topics)}
+- Learning complexity: {primary_complexity}
+- Total materials: {len(all_results)}
 
-    Synthesize the session and return JSON:
-    {{
-        "session_learning_theme": "primary_unified_theme",
-        "knowledge_progression": ["concept1", "concept2", "concept3"],
-        "learning_path": ["logical_step1", "logical_step2", "logical_step3"],
-        "session_complexity": "beginner|intermediate|advanced|expert",
-        "learning_goals": ["specific_goal1", "specific_goal2"],
-        "next_steps": ["actionable_step1", "actionable_step2"],
-        "concept_connections": {{"concept1": ["related1", "related2"]}},
-        "synthesis_method": "llm_complex"
-    }}
+Create a learning synthesis that shows HOW these concepts build knowledge:
 
-    Focus on the learning journey and concept relationships. Return valid JSON only."""
+{{
+    "session_learning_theme": "descriptive theme that captures the learning journey",
+    "knowledge_progression": ["foundational concept", "building concept", "advanced concept"],
+    "learning_path": ["logical step 1", "logical step 2", "logical step 3"],
+    "session_complexity": "beginner|intermediate|advanced|expert",
+    "learning_goals": ["specific capability 1", "specific capability 2"],
+    "next_steps": ["concrete action 1", "concrete action 2", "concrete action 3"],
+    "concept_connections": {{"concept1": ["directly_related1", "builds_to2"]}},
+    "synthesis_method": "llm_complex"
+}}
+
+REQUIREMENTS:
+- Learning goals should be specific capabilities, not vague statements
+- Next steps must be concrete actions someone can take
+- Concept connections should show how ideas build on each other
+- Focus on the intellectual journey and skill development
+
+Return valid JSON only."""
 
             messages = [
-                {"role": "system", "content": "You are an expert learning session synthesizer. Return only valid JSON."},
+                {"role": "system", "content": self._create_learning_focused_prompt_prefix()},
                 {"role": "user", "content": prompt}
             ]
             
@@ -850,59 +864,17 @@ class ContentAnalysisNode(BaseNode):
         synthesis_calls = 1 if llm_required > 0 else 0
         return batch_calls + synthesis_calls
 
+    def _create_learning_focused_prompt_prefix(self) -> str:
+        """Create consistent learning-focused prompt prefix"""
+        return """You are an expert learning analyst who identifies what people can learn, understand, and apply from educational content. 
 
-    def _llm_synthesize_complex_session(self, all_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Use LLM to synthesize complex multi-topic sessions"""
+    Focus on:
+    - Core concepts that build understanding
+    - Practical skills that can be developed  
+    - Knowledge that transfers to real applications
+    - Clear definitions that aid learning
+    - Logical progression of ideas
+
+    Always prioritize educational value and actionable insights."""
         
-        if not self.llm_client or not self.llm_client.is_available():
-            return self._rule_based_synthesis([], ['general'], 'intermediate')
         
-        # Extract key data for synthesis
-        all_concepts = []
-        all_topics = []
-        
-        for result in all_results:
-            all_concepts.extend(result.get('learning_concepts', []))
-            all_topics.append(result.get('main_topic', 'unknown'))
-        
-        # Create synthesis prompt
-        prompt = f"""Analyze this learning session with multiple concepts: {', '.join(all_concepts[:10])}
-
-    The session covered these topics: {', '.join(set(all_topics))}
-
-    Synthesize the session and return JSON:
-    {{
-    "session_learning_theme": "primary_theme",
-    "knowledge_progression": ["concept1", "concept2", "concept3"],
-    "learning_path": ["step1", "step2", "step3"],
-    "session_complexity": "beginner|intermediate|advanced",
-    "learning_goals": ["goal1", "goal2"],
-    "next_steps": ["action1", "action2"],
-    "concept_connections": {{"concept1": ["related1", "related2"]}},
-    "synthesis_method": "llm_complex"
-    }}
-
-    Focus on the learning journey and concept relationships. Return valid JSON only."""
-
-        try:
-            messages = [
-                {"role": "system", "content": "You are an expert learning session synthesizer. Return only valid JSON."},
-                {"role": "user", "content": prompt}
-            ]
-            
-            request_params = self.llm_client.set_provider_specific_defaults(
-                temperature=0.3,
-                max_tokens=800
-            )
-            
-            response_text = self.llm_client.chat_completion(messages, **request_params)
-            synthesis_result = json.loads(response_text)
-            
-            return synthesis_result
-            
-        except Exception as e:
-            self.logger.warning(f"LLM synthesis failed: {str(e)}, falling back to rule-based")
-            return self._rule_based_synthesis(all_concepts, list(set(all_topics)), 'intermediate')
-
-    
-    
