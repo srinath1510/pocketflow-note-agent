@@ -811,6 +811,25 @@ class TestPipelineComponents:
             assert 'nodes_created' in exec_result
             assert exec_result['nodes_created']['concepts'] > 0
 
+    def test_content_database_creation(self, mock_environment, mock_notion_api):
+        """Test content database is created with correct schema"""
+        from nodes.notion_note_generation import NotionDatabaseManager
+        from nodes.notion.client import NotionClient
+        
+        with patch('nodes.notion.client.requests') as mock_requests:
+            mock_requests.get.return_value.status_code = 200
+            mock_requests.post.return_value.status_code = 200
+            mock_requests.post.return_value.json.return_value = {'id': 'content_db_123'}
+        
+        client = NotionClient()
+        manager = NotionDatabaseManager(client)
+        
+        databases = manager.ensure_enhanced_databases_exist()
+        
+        # Should now include content database
+        assert 'captured_content' in databases
+        assert len(databases) == 4  # sessions, topics, concepts, content
+
 
 def test_main_pipeline_cli():
     """Test main.py CLI functionality"""
