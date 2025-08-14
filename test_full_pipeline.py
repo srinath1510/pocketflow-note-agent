@@ -830,6 +830,39 @@ class TestPipelineComponents:
         assert 'captured_content' in databases
         assert len(databases) == 4  # sessions, topics, concepts, content
 
+    
+    def test_content_page_creation(self, mock_environment, sample_learning_session, mock_notion_api):
+        """Test content pages are created for each capture"""
+        from nodes.notion.page_builder import NotionPageBuilder
+        from nodes.notion.client import NotionClient
+        
+        with patch('nodes.notion.client.requests') as mock_requests:
+            mock_requests.post.return_value.status_code = 200
+            mock_requests.post.return_value.json.return_value = {
+                'id': 'content_page_123',
+                'properties': {'Content Title': {'title': [{'plain_text': 'Test Title'}]}}
+            }
+            mock_requests.patch.return_value.status_code = 200
+            
+            client = NotionClient()
+            builder = NotionPageBuilder(client)
+            
+            # Mock topic organization
+            topic_org = {
+                'Machine Learning': {
+                    'captures': sample_learning_session[:2]
+                }
+            }
+            
+            content_pages = builder.create_content_pages(
+                sample_learning_session, 
+                'content_db_123', 
+                topic_org
+            )
+            
+            assert len(content_pages) == 4
+            
+
 
 def test_main_pipeline_cli():
     """Test main.py CLI functionality"""
