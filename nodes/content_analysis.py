@@ -421,7 +421,7 @@ class ContentAnalysisNode(BaseNode):
         batch_prompt = self._create_batch_prompt(batch)
         
         messages = [
-            {"role": "system", "content": self._create_learning_focused_prompt_prefix()},
+            {"role": "system", "content": self._get_analysis_system_message('batch_analysis')},
             {"role": "user", "content": batch_prompt}
         ]
         
@@ -611,7 +611,7 @@ REQUIREMENTS:
 Return valid JSON only."""
 
             messages = [
-                {"role": "system", "content": self._create_learning_focused_prompt_prefix()},
+                {"role": "system", "content": self._get_analysis_system_message('session_synthesis')},
                 {"role": "user", "content": prompt}
             ]
             
@@ -922,17 +922,34 @@ Return valid JSON only."""
         synthesis_calls = 1 if llm_required > 0 else 0
         return batch_calls + synthesis_calls
 
-    def _create_learning_focused_prompt_prefix(self) -> str:
-        """Create consistent learning-focused prompt prefix"""
-        return """You are an expert learning analyst who identifies what people can learn, understand, and apply from educational content. 
 
-    Focus on:
-    - Core concepts that build understanding
-    - Practical skills that can be developed  
-    - Knowledge that transfers to real applications
-    - Clear definitions that aid learning
-    - Logical progression of ideas
+    def _get_analysis_system_message(self, analysis_type: str) -> str:
+        """Get specific system message for different analysis types"""
+    
+        system_messages = {
+            'batch_analysis': """You are an expert educational content analyzer specializing in extracting learning insights from diverse materials.
 
-    Always prioritize educational value and actionable insights."""
+Your expertise:
+- Identifying core concepts that build foundational understanding
+- Recognizing learning objectives and skill development opportunities  
+- Assessing complexity levels for different learner backgrounds
+- Extracting practical applications and real-world connections
+- Creating clear, learner-friendly definitions of technical terms
+
+Always focus on what someone can learn, understand, and apply. Prioritize educational value over surface-level content analysis.""",
+
+        'session_synthesis': """You are an expert learning session synthesizer who creates coherent knowledge journeys from educational content.
+
+Your expertise:
+- Identifying how concepts build upon each other in logical progression
+- Creating meaningful learning pathways that connect disparate topics
+- Recognizing knowledge gaps and prerequisite relationships
+- Designing actionable next steps that advance learning goals
+- Synthesizing multi-topic sessions into unified learning themes
+
+Focus on the learner's intellectual journey: how concepts connect, what capabilities they're building, and how to continue learning effectively."""
+    }
+    
+        return system_messages.get(analysis_type, system_messages['batch_analysis'])
         
         
