@@ -34,40 +34,26 @@ class ContentEnhancer:
             captures = topic_data.get('captures', [])
         
             # Single strategic LLM call for memory-focused content
-            memory_prompt = f"""Create memory-focused learning content for: {topic_name}
+            memory_prompt = f"""Generate practical learning content for: {topic_name}
 
-LEARNING CONTEXT:
-- Concepts encountered: {', '.join(concepts)}
-- User level: {user_context.get('knowledge_level', 'intermediate')}
-- Session theme: {user_context.get('session_theme', 'exploration')}
-- Sources: {len(captures)} articles/resources
+CONTEXT:
+- Concepts: {', '.join(concepts)}
+- Level: {user_context.get('knowledge_level', 'intermediate')}
+- Sources: {len(captures)}
 
-Generate content that helps users REMEMBER and RECOLLECT their learning:
+Create:
+1. LEARNING_STORY: One clear sentence explaining what you learned about {topic_name}
+2. CONCEPT_CARDS: For each concept, provide: concept name, one-line definition, practical use
+3. CURIOSITY_QUESTIONS: 3 specific questions to explore next
+4. PERSONAL_RELEVANCE: One sentence on why this matters practically
 
-1. LEARNING STORY (2-3 sentences):
-   - What intellectual journey did they take?
-   - What sparked curiosity about {topic_name}?
-   
-2. CONCEPT MEMORY CARDS (for each concept):
-   - One-line essence: "X is like Y because Z"
-   - Why it matters personally
-   - Quick memory trigger
-
-3. CURIOSITY QUESTIONS (3-4 questions):
-   - What would naturally arise in a curious mind?
-   - Point toward deeper exploration
-   
-4. PERSONAL RELEVANCE:
-   - Why does {topic_name} matter for their goals?
-   - How to apply this knowledge practically?
-
-Return JSON with learning_story, concept_cards, curiosity_questions, personal_relevance."""
+Return JSON: {{"learning_story": "...", "concept_cards": [...], "curiosity_questions": [...], "personal_relevance": "..."}}"""
 
             messages = [
-                {"role": "system", "content": "Create memorable, personal learning content that helps users recollect their intellectual journey."},
+                {"role": "system", "content": "Generate practical, actionable learning content. Be concise and specific. Focus on what users can apply immediately."},
                 {"role": "user", "content": memory_prompt}
             ]
-        
+            
             request_params = self.llm_client.set_provider_specific_defaults(temperature=0.4, max_tokens=1800)
             response_text = self.llm_client.chat_completion(messages, **request_params)
             memory_content = json.loads(response_text)
@@ -88,26 +74,22 @@ Return JSON with learning_story, concept_cards, curiosity_questions, personal_re
             concepts = pipeline_data['extracted_concepts'].get('learning_concepts', [])
             session_theme = pipeline_data['extracted_concepts'].get('session_theme', 'exploration')
             
-            story_prompt = f"""Create a memorable learning session story:
+            story_prompt = f"""Create a concise learning session summary:
 
-    SESSION DATA:
-    - Theme: {session_theme}
-    - Concepts learned: {', '.join(concepts[:10])}
-    - Knowledge level: {session_metadata['knowledge_level']}
-    - Total topics: {session_metadata.get('topics_identified', 1)}
+SESSION: {session_theme}
+CONCEPTS: {', '.join(concepts[:8])}
+LEVEL: {session_metadata['knowledge_level']}
 
-    Write a 2-3 sentence story that captures:
-    1. What sparked this learning session
-    2. The intellectual journey taken
-    3. Key breakthroughs achieved
+Generate:
+- TITLE: Clear session name (5 words max)
+- STORY: One sentence describing what was learned
+- SPARK: What triggered this learning
+- BREAKTHROUGH: Key insight gained
 
-    Use second person ("You discovered...", "This led you to...") for personal connection.
-    Also provide a compelling session title.
-
-    Return JSON: {{"title": "session title", "story": "2-3 sentence narrative", "spark": "what triggered learning", "breakthrough": "key insight gained"}}"""
+Return JSON: {{"title": "...", "story": "...", "spark": "...", "breakthrough": "..."}}"""
 
             messages = [
-                {"role": "system", "content": "Create memorable learning narratives that help users recollect their intellectual journeys."},
+                {"role": "system", "content": "Create clear, memorable learning summaries. Be direct and specific about what was learned."},
                 {"role": "user", "content": story_prompt}
             ]
             
@@ -132,41 +114,22 @@ Return JSON with learning_story, concept_cards, curiosity_questions, personal_re
                 'connections': data.get('cross_topic_connections', [])
             } for name, data in all_topics.items()}
             
-            synthesis_prompt = f"""
-            Synthesize this multi-topic learning session into strategic insights:
-            
-            TOPICS COVERED: {json.dumps(topic_summary, indent=2)}
-            
-            KNOWLEDGE CONNECTIONS: {pipeline_data.get('historical_connections', {}).get('total_connections_found', 0)}
-            KNOWLEDGE GAPS: {len(pipeline_data.get('knowledge_gaps', []))}
-            
-            Generate comprehensive synthesis:
-            
-            1. SESSION OVERVIEW:
-            - Unifying theme across all topics
-            - Learning journey narrative
-            - Key insights discovered
-            
-            2. TOPIC RELATIONSHIP MAP:
-            - How topics build upon each other
-            - Prerequisites and dependencies
-            - Synergistic combinations
-            
-            3. STRATEGIC NEXT STEPS:
-            - High-impact learning priorities
-            - Knowledge gap filling strategy
-            - Advanced exploration paths
-            
-            4. KNOWLEDGE INTEGRATION:
-            - How to apply learnings together
-            - Cross-domain applications
-            - Real-world project ideas
-            
-            Return rich JSON with actionable insights and beautiful narrative structure.
-            """
-            
+            synthesis_prompt = f"""Synthesize this multi-topic learning session:
+
+TOPICS: {json.dumps(topic_summary, indent=2)}
+CONNECTIONS: {pipeline_data.get('historical_connections', {}).get('total_connections_found', 0)}
+GAPS: {len(pipeline_data.get('knowledge_gaps', []))}
+
+Generate:
+1. SESSION_OVERVIEW: Main theme and key insights (2 sentences)
+2. TOPIC_RELATIONSHIPS: How topics connect (3 key connections)
+3. STRATEGIC_NEXT_STEPS: 3 specific actions to take
+4. KNOWLEDGE_INTEGRATION: How to apply learnings together
+
+Return JSON with session_overview, topic_relationship_map, strategic_next_steps, knowledge_integration."""
+
             messages = [
-                {"role": "system", "content": "You are an expert learning synthesizer who creates coherent learning narratives and strategic insights."},
+                {"role": "system", "content": "Create actionable learning synthesis. Focus on practical connections and next steps."},
                 {"role": "user", "content": synthesis_prompt}
             ]
             
@@ -198,21 +161,23 @@ Return JSON with learning_story, concept_cards, curiosity_questions, personal_re
                 'sample_content': topic_data['captures'][0].get('content', '')[:200] if topic_data['captures'] else ''
             })
 
-        prompt = f"""Enhance these research topics with rich learning context:
+        prompt = f"""Enhance these learning topics with practical details:
 
 TOPICS: {json.dumps(topics_summary, indent=2)}
+SESSION_THEME: {pipeline_data['extracted_concepts'].get('session_theme', 'general')}
+LEVEL: {self._assess_session_knowledge_level(pipeline_data)}
 
-USER CONTEXT:
-- Session Theme: {pipeline_data['extracted_concepts'].get('session_theme', 'general')}
-- Knowledge Level: {self._assess_session_knowledge_level(pipeline_data)}
+For each topic, provide:
+- enhanced_description: One clear sentence explaining the topic
+- learning_outcomes: 3 specific skills/knowledge gained
+- practical_applications: 3 ways to apply this knowledge
+- key_insights: 2 main takeaways
 
-For each topic, provide enhanced_description, learning_outcomes, learning_sequence, key_insights, and practical_applications.
-
-Return JSON format: {{"topic_name": {{"enhanced_description": "...", "learning_outcomes": [...], ...}}}}"""
+Return JSON: {{"topic_name": {{"enhanced_description": "...", "learning_outcomes": [...], "practical_applications": [...], "key_insights": [...]}}}}"""
 
         try:
             messages = [
-                {"role": "system", "content": "You are an expert learning designer. Return only valid JSON."},
+                {"role": "system", "content": "Enhance learning topics with practical, actionable details. Be specific about outcomes and applications."},
                 {"role": "user", "content": prompt}
             ]
             
