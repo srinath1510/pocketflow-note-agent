@@ -788,16 +788,39 @@ Return valid JSON only."""
         # Simple concept extraction - can be enhanced
         concepts = []
         
-        # Look for capitalized terms (potential concepts)
-        concept_patterns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', content)
-        concepts.extend([concept for concept in concept_patterns if len(concept.split()) <= 3])
+        content_lower = content.lower()
+    
+        # Learning-specific concept patterns
+        learning_patterns = [
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+(?:is|are|means|refers to)',  # Definitions
+            r'(?:concept of|principle of|theory of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})',  # Named concepts
+            r'(?:understanding|learning|mastering)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})',  # Learning targets
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+(?:algorithm|method|technique|approach)',  # Technical concepts
+            r'(?:key|important|fundamental|core)\s+([a-z]+(?:\s+[a-z]+){0,2})',  # Emphasized concepts
+        ]
         
-        # Look for quoted terms
+        for pattern in learning_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            concepts.extend([match.strip() for match in matches if len(match.split()) <= 3])
+        
+        # Look for quoted important terms
         quoted_terms = re.findall(r'"([^"]+)"', content)
         concepts.extend([term for term in quoted_terms if len(term.split()) <= 3])
         
-        return list(set(concepts))[:10]  # Limit and deduplicate
-    
+        # Look for capitalized technical terms
+        tech_terms = re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)*\b', content)
+        concepts.extend([term for term in tech_terms if len(term) > 3 and len(term) < 20])
+        
+        # Clean and deduplicate
+        cleaned_concepts = []
+        for concept in concepts:
+            clean = concept.strip().title()
+            if clean and len(clean) > 2 and clean not in cleaned_concepts:
+                cleaned_concepts.append(clean)
+        
+        return cleaned_concepts[:12]  # Return top 12 concepts
+        
+
     def _extract_entities_rules(self, content: str) -> Dict[str, str]:
         """Extract entities using simple patterns"""
         entities = {}
@@ -819,9 +842,26 @@ Return valid JSON only."""
         terms = {}
         
         # Look for definition patterns: "X is/means/refers to Y"
-        definitions = re.findall(r'(\w+(?:\s+\w+)*)\s+(?:is|means|refers to)\s+([^.!?]+)', content, re.IGNORECASE)
-        for term, definition in definitions[:5]:  # Limit to 5
-            terms[term.strip()] = definition.strip()
+        definition_patterns = [
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+is\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+means\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+refers to\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*:\s*([^.!?]+)',  # Colon definitions
+            r'The term\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+([^.!?]+)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+can be defined as\s+([^.!?]+)',
+        ]
+        
+        for pattern in definition_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            for term, definition in matches:
+                if len(term.split()) <= 3 and len(definition) > 10:  # Quality filter
+                    clean_term = term.strip().title()
+                    clean_def = definition.strip().capitalize()
+                    if clean_term and clean_def:
+                        terms[clean_term] = clean_def
+                    
+                    if len(terms) >= 8:  # Limit to most important terms
+                        break
         
         return terms
     
@@ -829,15 +869,33 @@ Return valid JSON only."""
         """Assess content complexity using simple heuristics"""
         word_count = len(content.split())
         
-        # Count technical indicators
-        technical_patterns = [r'\b\w{10,}\b', r'\$[^$]+\$', r'```', r'<code>', r'\([A-Z][a-z]+\s+et\s+al\.\)']
+        # Learning complexity indicators
+        beginner_indicators = ['introduction', 'basics', 'getting started', 'overview', 'simple']
+        intermediate_indicators = ['implementation', 'practical', 'application', 'building']
+        advanced_indicators = ['optimization', 'architecture', 'advanced', 'performance', 'scaling']
+        expert_indicators = ['research', 'theoretical', 'novel', 'cutting-edge', 'paradigm']
+    
+        content_lower = content.lower()
+    
+        # Count complexity indicators
+        beginner_score = sum(1 for term in beginner_indicators if term in content_lower)
+        intermediate_score = sum(1 for term in intermediate_indicators if term in content_lower)
+        advanced_score = sum(1 for term in advanced_indicators if term in content_lower)
+        expert_score = sum(1 for term in expert_indicators if term in content_lower)
+    
+        # Technical depth indicators
+        technical_patterns = [r'\b\w{12,}\b', r'[A-Z]{3,}', r'[\w\-]+\(\)', r'[a-z]+\.[a-z]+']
         technical_score = sum(len(re.findall(pattern, content)) for pattern in technical_patterns)
-        
-        if word_count < 200 and technical_score < 3:
-            return 'beginner'
-        elif word_count > 1000 or technical_score > 10:
+    
+        # Math/formula indicators
+        math_score = len(re.findall(r'[\+\-\*/=<>∑∏∫∆]|\b(?:equation|formula|algorithm)\b', content))
+    
+        # Combine indicators
+        if expert_score > 0 or (advanced_score > 2 and technical_score > 20):
+            return 'expert'
+        elif advanced_score > 0 or (intermediate_score > 2 and technical_score > 10):
             return 'advanced'
-        elif technical_score > 5:
+        elif intermediate_score > 0 or (word_count > 500 and technical_score > 5):
             return 'intermediate'
         else:
             return 'beginner'
