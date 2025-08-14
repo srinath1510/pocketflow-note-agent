@@ -219,7 +219,7 @@ class NotionNoteGenerationNode(BaseNode):
                     'content_pages_created': len(content_pages),
                     'concepts_created': len(concept_entries),
                     'sources_created': len(pipeline_data['raw_captures']),
-                    'total_pages': 1 + len(topic_pages) + len(concept_entries),
+                    'total_pages': 1 + len(topic_pages) + len(concept_entries) + len(content_pages),
                     'topics_covered': list(topic_organization.keys()),
                     'enhancement_features_used': [
                         'modular_architecture',
@@ -237,7 +237,8 @@ class NotionNoteGenerationNode(BaseNode):
                     'databases': {
                         'sessions': f"https://notion.so/{databases['learning_sessions'].replace('-', '')}",
                         'topics': f"https://notion.so/{databases['research_topics'].replace('-', '')}",
-                        'concepts': f"https://notion.so/{databases['concept_library'].replace('-', '')}"
+                        'concepts': f"https://notion.so/{databases['concept_library'].replace('-', '')}",
+                        'content': f"https://notion.so/{databases['captured_content'].replace('-', '')}"
                     }
                 }
             }
