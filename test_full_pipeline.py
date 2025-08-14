@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch, MagicMock, PropertyMock
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Import pipeline components
 from main import NoteGenerationPipeline, create_sample_minimal_input
@@ -24,7 +25,12 @@ from nodes.content_analysis import ContentAnalysisNode
 from nodes.knowledge_graph import KnowledgeGraphNode
 from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
 from nodes.notion_note_generation import NotionNoteGenerationNode
+from nodes.notion.database_manager import NotionDatabaseManager
+from nodes.notion.page_builder import NotionPageBuilder  
+from nodes.notion.block_builder import NotionBlockBuilder
+from nodes.notion.client import NotionClient
 
+load_dotenv()
 
 class TestCompletePipeline:
     """Integration tests for the complete AI learning pipeline"""
@@ -262,10 +268,12 @@ class TestCompletePipeline:
             
             # Mock database creation
             mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = {
-                'id': 'test_database_123',
-                'title': [{'plain_text': 'Smart Notes Database'}]
-            }
+            mock_post.return_value.json.side_effect = [
+                {'id': 'test_database_123', 'title': [{'plain_text': 'Smart Notes Database'}]},
+                {'id': 'content_db_123', 'title': [{'plain_text': 'Content Database'}]},
+                {'id': 'content_page_123', 'properties': {'Content Title': {'title': [{'plain_text': 'Test Content'}]}}},
+                {'id': 'content_page_456', 'properties': {'Content Title': {'title': [{'plain_text': 'Test Content 2'}]}}}
+            ]
             
             # Mock page creation
             mock_patch.return_value.status_code = 200
@@ -273,6 +281,12 @@ class TestCompletePipeline:
                 'id': 'test_page_123',
                 'url': 'https://notion.so/test_page_123'
             }
+
+            # Mock content page creation responses
+            mock_post.return_value.json.side_effect = [
+                {'id': 'test_database_123', 'title': [{'plain_text': 'Smart Notes Database'}]},
+                {'id': 'content_page_123', 'properties': {'Content Title': {'title': [{'plain_text': 'Test Content'}]}}}
+            ]
             
             yield {
                 'get': mock_get,
@@ -332,7 +346,8 @@ class TestCompletePipeline:
                 mock_db_manager.ensure_enhanced_databases_exist.return_value = {
                     'learning_sessions': 'db_sessions_123',
                     'research_topics': 'db_topics_123', 
-                    'concept_library': 'db_concepts_123'
+                    'concept_library': 'db_concepts_123',
+                    'captured_content': 'db_content_123'
                 }
 
                 # Mock topic organizer
@@ -825,8 +840,6 @@ class TestPipelineComponents:
 
     def test_content_database_creation(self, mock_environment, mock_notion_api):
         """Test content database is created with correct schema"""
-        from nodes.notion_note_generation import NotionDatabaseManager
-        from nodes.notion.client import NotionClient
         
         with patch('nodes.notion.client.requests') as mock_requests:
             mock_requests.get.return_value.status_code = 200
@@ -844,9 +857,7 @@ class TestPipelineComponents:
     
     def test_enhanced_database_schemas(self, mock_environment):
         """Test all 4 databases are included in schema"""
-        from nodes.notion.database_manager import NotionDatabaseManager
-        from nodes.notion.client import NotionClient
-        
+
         manager = NotionDatabaseManager(NotionClient())
         schemas = manager.database_schemas
         
@@ -864,9 +875,7 @@ class TestPipelineComponents:
     
     def test_content_page_creation(self, mock_environment, sample_learning_session, mock_notion_api):
         """Test content pages are created for each capture"""
-        from nodes.notion.page_builder import NotionPageBuilder
-        from nodes.notion.client import NotionClient
-        
+
         with patch('nodes.notion.client.requests') as mock_requests:
             mock_requests.post.return_value.status_code = 200
             mock_requests.post.return_value.json.return_value = {
@@ -896,8 +905,6 @@ class TestPipelineComponents:
     
     def test_topic_pages_include_full_content(self, mock_environment, sample_learning_session, mock_notion_api):
         """Test topic pages now include full content sections"""
-        from nodes.notion.block_builder import NotionBlockBuilder
-        from nodes.notion.client import NotionClient
         
         with patch('nodes.notion.client.requests') as mock_requests:
             mock_requests.patch.return_value.status_code = 200
@@ -913,7 +920,7 @@ class TestPipelineComponents:
             content_pages = [{'id': 'content_123', 'properties': {'Content Title': {'title': [{'plain_text': 'ML Intro'}]}}}]
             
             # Should not raise errors
-            builder.add_rich_topic_content_with_sources(
+            builder.add_rich_topic_content(
                 'page_123',
                 'Machine Learning', 
                 topic_data,
@@ -928,8 +935,6 @@ class TestPipelineComponents:
     
     def test_content_type_classification(self):
         """Test improved content type classification"""
-        from nodes.notion.page_builder import NotionPageBuilder
-        from nodes.notion.client import NotionClient
         
         builder = NotionPageBuilder(NotionClient())
         
