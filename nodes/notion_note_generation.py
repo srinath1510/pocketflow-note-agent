@@ -164,7 +164,6 @@ class NotionNoteGenerationNode(BaseNode):
                         topic_name, 
                         enhanced_topic_data, 
                         pipeline_data, 
-                        content_pages,
                         color_theme
                     )
                     topic_pages[topic_name] = topic_page
