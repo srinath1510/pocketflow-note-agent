@@ -893,6 +893,51 @@ class TestPipelineComponents:
             
             # Verify content blocks were added
             mock_requests.patch.assert_called()
+
+    
+    def test_content_type_classification(self):
+        """Test improved content type classification"""
+        from nodes.notion.page_builder import NotionPageBuilder
+        from nodes.notion.client import NotionClient
+        
+        builder = NotionPageBuilder(NotionClient())
+        
+        # Test tutorial classification
+        tutorial_capture = {
+            'url': 'https://example.com/how-to-learn-ml',
+            'content': 'step by step tutorial on machine learning',
+            'title': 'ML Tutorial',
+            'metadata': {'domain': 'example.com'}
+        }
+        assert builder._classify_content_type(tutorial_capture) == 'Tutorial'
+        
+        # Test documentation classification  
+        docs_capture = {
+            'url': 'https://docs.python.org/api-reference',
+            'content': 'api reference for python functions',
+            'title': 'Python API Docs',
+            'metadata': {'domain': 'docs.python.org'}
+        }
+        assert builder._classify_content_type(docs_capture) == 'Documentation'
+        
+        # Test research paper classification
+        research_capture = {
+            'url': 'https://arxiv.org/paper123',
+            'content': 'abstract methodology experiment results conclusion references',
+            'title': 'Deep Learning Research',
+            'metadata': {'domain': 'arxiv.org'}
+        }
+        assert builder._classify_content_type(research_capture) == 'Research Paper'
+        
+        # Test blog post classification
+        blog_capture = {
+            'url': 'https://medium.com/@author/my-thoughts',
+            'content': 'in my opinion this is how i think about machine learning',
+            'title': 'My ML Journey',
+            'metadata': {'domain': 'medium.com'}
+        }
+        assert builder._classify_content_type(blog_capture) == 'Blog Post'
+        
                 
 
 
