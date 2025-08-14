@@ -829,6 +829,25 @@ class TestPipelineComponents:
         # Should now include content database
         assert 'captured_content' in databases
         assert len(databases) == 4  # sessions, topics, concepts, content
+    
+    def test_enhanced_database_schemas(self, mock_environment):
+        """Test all 4 databases are included in schema"""
+        from nodes.notion.database_manager import NotionDatabaseManager
+        from nodes.notion.client import NotionClient
+        
+        manager = NotionDatabaseManager(NotionClient())
+        schemas = manager.database_schemas
+        
+        # Should now have 4 databases
+        expected_dbs = ['learning_sessions', 'research_topics', 'concept_library', 'captured_content']
+        assert all(db in schemas for db in expected_dbs)
+        
+        # Test captured_content schema
+        content_schema = schemas['captured_content']
+        assert 'Content Title' in content_schema['properties']
+        assert 'Source URL' in content_schema['properties']
+        assert 'Content Type' in content_schema['properties']
+        assert 'Related Topics' in content_schema['properties']
 
     
     def test_content_page_creation(self, mock_environment, sample_learning_session, mock_notion_api):
