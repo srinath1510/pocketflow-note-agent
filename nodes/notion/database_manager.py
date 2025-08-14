@@ -119,6 +119,38 @@ class NotionDatabaseManager:
                     'Prerequisites': {'multi_select': {'options': []}},
                     'Applications': {'multi_select': {'options': []}}
                 }
+            },
+            'captured_content': {
+                'title': '📄 Smart Notes - Captured Content',
+                'properties': {
+                    'Content Title': {'title': {}},
+                    'Source URL': {'url': {}},
+                    'Capture Date': {'date': {}},
+                    'Content Type': {
+                        'select': {
+                            'options': [
+                                {'name': 'Article', 'color': 'blue'},
+                                {'name': 'Tutorial', 'color': 'green'},
+                                {'name': 'Documentation', 'color': 'yellow'},
+                                {'name': 'Blog Post', 'color': 'purple'},
+                                {'name': 'Research Paper', 'color': 'red'},
+                                {'name': 'General', 'color': 'gray'}
+                            ]
+                        }
+                    },
+                    'Word Count': {'number': {}},
+                    'Related Topics': {'multi_select': {'options': []}},
+                    'Content Preview': {'rich_text': {}},
+                    'Processing Status': {
+                        'select': {
+                            'options': [
+                                {'name': 'Captured', 'color': 'yellow'},
+                                {'name': 'Processed', 'color': 'green'},
+                                {'name': 'Archived', 'color': 'gray'}
+                            ]
+                        }
+                    }
+                }
             }
         }
     
