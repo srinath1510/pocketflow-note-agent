@@ -158,7 +158,7 @@ class NotionDatabaseManager:
         """Ensure all enhanced databases exist and return their IDs"""
         databases = {}
         
-        for db_type in ['learning_sessions', 'research_topics', 'concept_library']:
+        for db_type in ['learning_sessions', 'research_topics', 'concept_library', 'captured_content']:
             if db_type in self.database_schemas:
                 db_id = self._get_or_create_database(db_type)
                 databases[db_type] = db_id
