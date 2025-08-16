@@ -24,7 +24,7 @@ class NotionBlockBuilder:
             self.llm_client = None
     
     def add_rich_topic_content(self, page_id: str, topic_name: str, topic_data: Dict[str, Any], 
-                              pipeline_data: Dict[str, Any], color_theme: str):
+                              pipeline_data: Dict[str, Any], content_pages: List[Dict], color_theme: str):
         """Add memory-focused content to topic page"""
         rich_content = topic_data.get('rich_content', {})
         
@@ -46,7 +46,7 @@ class NotionBlockBuilder:
         blocks.extend(self._create_topic_curiosity_questions(rich_content, topic_name))
         
         # Sources with context
-        blocks.extend(self._create_contextual_sources_section(topic_data))
+        blocks.extend(self._create_contextual_sources_section(topic_data, content_pages))
         
         # Spaced repetition schedule
         blocks.extend(self._create_spaced_review_section(rich_content))
@@ -512,7 +512,7 @@ Return only the questions, one per line."""
         
         return blocks
     
-    def _create_contextual_sources_section(self, topic_data):
+    def _create_contextual_sources_section(self, topic_data: Dict, content_pages: List[Dict]) -> List[Dict]:
         """Create sources section with full content access"""
         blocks = []
         
