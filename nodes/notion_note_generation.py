@@ -163,12 +163,14 @@ class NotionNoteGenerationNode(BaseNode):
                         topic_page['id'], 
                         topic_name, 
                         enhanced_topic_data, 
-                        pipeline_data, 
+                        pipeline_data,
+                        content_pages,
                         color_theme
                     )
                     topic_pages[topic_name] = topic_page
             
             # Step 4: Create enhanced concept library entries
+            self.logger.info(f"Creating concept library entries for {len(pipeline_data['extracted_concepts'].get('learning_concepts', []))} concepts")
             concept_entries = self.page_builder.create_enhanced_concept_library_entries(
                 pipeline_data['extracted_concepts'], 
                 databases['concept_library'], 
@@ -183,6 +185,7 @@ class NotionNoteGenerationNode(BaseNode):
             )
             
             # Step 6: Enhanced master page
+            self.logger.info(f"Creating master session page in database: {databases['learning_sessions']}")
             master_session_page = self.page_builder.create_enhanced_master_session_page(
                 session_metadata, 
                 pipeline_data, 
@@ -244,6 +247,8 @@ class NotionNoteGenerationNode(BaseNode):
             }
         except Exception as e:
             self.logger.error(f"Enhanced Notion generation failed: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return {'error': f"Enhanced Notion generation failed: {str(e)}"}
 
     def post(self, shared_state: Dict[str, Any], prep_result: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
