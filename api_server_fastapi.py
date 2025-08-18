@@ -681,6 +681,112 @@ async def get_status():
         logger.error(f"Status endpoint error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/api/v1/capture", response_model=UniversalCaptureResponse)
+async def process_universal_capture(request: UniversalCaptureRequest):
+    """
+    Universal capture endpoint supporting all content types
+    
+    Handles: web content, AI chats, PDF reading, YouTube videos, manual notes
+    Returns: thread assignment, timeline entry, and minimal insights
+    """
+    start_time = time.time()
+    
+    try:
+        logger.info(f"=== UNIVERSAL CAPTURE REQUEST ===")
+        logger.info(f"Type: {request.type}")
+        logger.info(f"User: {request.user_id}")
+        logger.info(f"Content length: {len(request.content)}")
+        
+        # Generate capture ID
+        capture_id = str(uuid.uuid4())
+        
+        # Process content based on type
+        processed_capture = content_processor.process_capture(request)
+        
+        # Create normalized capture for pipeline
+        normalized_capture = {
+            'content': request.content,
+            'user_id': request.user_id,
+            'source_url': request.source_url or 'unknown',
+            'title': request.title or 'Untitled',
+            'timestamp': request.timestamp or datetime.now(timezone.utc).isoformat(),
+            'intent': 'learn',  # Default intent
+            'user_note': '',
+            'capture_id': capture_id,
+            'capture_type': request.type.value,
+            'processed_metadata': processed_capture
+        }
+        
+        # Simple thread detection (mock implementation for now)
+        thread_assignment = ThreadAssignment(
+            thread_id=request.thread_id,
+            thread_name=f"Research Thread",
+            confidence=0.8,
+            assignment_type="suggested",
+            suggested_thread_name=f"{request.type.value.replace('_', ' ').title()} Research"
+        )
+        
+        # Create timeline entry
+        timeline_entry = TimelineEntry(
+            capture_id=capture_id,
+            timestamp=normalized_capture['timestamp'],
+            capture_type=request.type,
+            source_title=request.title or 'Untitled',
+            source_url=request.source_url,
+            content_preview=request.content[:200] + "..." if len(request.content) > 200 else request.content,
+            resume_context=processed_capture.get('resume_context'),
+            quick_actions=[
+                f"Continue {request.type.value.replace('_', ' ')}",
+                "Add to research notes",
+                "Share with team"
+            ]
+        )
+        
+        # Generate minimal insights (mock for now)
+        minimal_insights = [MinimalInsight(
+            capture_id=capture_id,
+            key_concepts=processed_capture.get('thread_signals', [])[:3],
+            actionable_items=processed_capture.get('practical_insights', [])[:2],
+            connections=[]
+        )]
+        
+        # Store capture (add to existing storage)
+        notes_storage.append(normalized_capture)
+        
+        processing_time = time.time() - start_time
+        
+        logger.info(f"✅ Capture processed successfully")
+        logger.info(f"   Capture ID: {capture_id}")
+        logger.info(f"   Thread: {thread_assignment.suggested_thread_name}")
+        logger.info(f"   Processing time: {processing_time:.3f}s")
+        
+        return UniversalCaptureResponse(
+            success=True,
+            capture_id=capture_id,
+            thread_assignment=thread_assignment,
+            timeline_entry=timeline_entry,
+            minimal_insights=minimal_insights,
+            next_actions=[
+                "Continue research in this thread",
+                "Review related captures",
+                "Add more context"
+            ],
+            processing_time=processing_time,
+            timestamp=datetime.now(timezone.utc).isoformat()
+        )
+        
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Universal capture error: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to process capture: {str(e)}"
+        )
+
 @app.post("/api/notes/batch", response_model=BatchResponse)
 async def receive_batch(batch_request: BatchRequest, background_tasks: BackgroundTasks):
     """Receive a batch of notes from the extension"""
