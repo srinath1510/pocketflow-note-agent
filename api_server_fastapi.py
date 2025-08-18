@@ -221,6 +221,41 @@ class ErrorResponse(BaseModel):
     error_type: Optional[str] = None
     debug: Optional[str] = None
 
+class CaptureType(str, Enum):
+    """Supported capture types for multi-modal content"""
+    WEB_CONTENT = "web_content"
+    AI_CHAT = "ai_chat"
+    PDF_READING = "pdf_reading"
+    YOUTUBE_VIDEO = "youtube_video"
+    QUICK_NOTE = "quick_note"
+
+class UniversalCaptureRequest(BaseModel):
+    """Universal capture request supporting all content types"""
+    type: CaptureType = Field(..., description="Type of content being captured")
+    content: str = Field(..., min_length=1, description="The captured content")
+    user_id: str = Field(..., min_length=1, description="User identifier")
+    source_url: Optional[str] = Field(None, description="Source URL if applicable")
+    title: Optional[str] = Field("Untitled", description="Content title")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Capture-specific metadata")
+    thread_id: Optional[str] = Field(None, description="Research thread assignment")
+    timestamp: Optional[str] = Field(None, description="Capture timestamp")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "type": "web_content",
+                "content": "Machine learning is a method of data analysis that automates analytical model building.",
+                "user_id": "researcher_123",
+                "source_url": "https://example.com/ml-intro",
+                "title": "Introduction to Machine Learning",
+                "metadata": {
+                    "reading_time": 5,
+                    "scroll_position": 0.75,
+                    "highlights": ["analytical model building"]
+                }
+            }
+        }
+    )
 # Utility functions
 
 def serialize_for_json(obj):
