@@ -646,7 +646,7 @@ async def check_rate_limit(request: Request, capture_request: UniversalCaptureRe
     
     return capture_request
 
-    
+
 def serialize_for_json(obj):
     """Convert datetime objects and other non-serializable objects to JSON-safe formats"""
     if isinstance(obj, datetime):
@@ -803,9 +803,17 @@ async def get_status():
 
 
 @app.post("/api/v1/capture", response_model=UniversalCaptureResponse)
-async def process_universal_capture(request: UniversalCaptureRequest):
+async def process_universal_capture(
+    request: Request,
+    capture_request: UniversalCaptureRequest = Depends(check_rate_limit)
+):
     """
-    Universal capture endpoint supporting all content types
+    Universal capture endpoint supporting all content types with rate limiting
+    
+    Rate Limits:
+    - 30 requests per minute per user
+    - Returns 429 status when exceeded
+    - Includes rate limit headers in response
     
     Handles: web content, AI chats, PDF reading, YouTube videos, manual notes
     Returns: thread assignment, timeline entry, and minimal insights
@@ -814,50 +822,50 @@ async def process_universal_capture(request: UniversalCaptureRequest):
     
     try:
         logger.info(f"=== UNIVERSAL CAPTURE REQUEST ===")
-        logger.info(f"Type: {request.type}")
-        logger.info(f"User: {request.user_id}")
-        logger.info(f"Content length: {len(request.content)}")
+        logger.info(f"Type: {capture_request.type}")
+        logger.info(f"User: {capture_request.user_id}")
+        logger.info(f"Content length: {len(capture_request.content)}")
         
         # Generate capture ID
         capture_id = str(uuid.uuid4())
         
         # Process content based on type
-        processed_capture = content_processor.process_capture(request)
+        processed_capture = content_processor.process_capture(capture_request)
         
         # Create normalized capture for pipeline
         normalized_capture = {
-            'content': request.content,
-            'user_id': request.user_id,
-            'source_url': request.source_url or 'unknown',
-            'title': request.title or 'Untitled',
-            'timestamp': request.timestamp or datetime.now(timezone.utc).isoformat(),
+            'content': capture_request.content,
+            'user_id': capture_request.user_id,
+            'source_url': capture_request.source_url or 'unknown',
+            'title': capture_request.title or 'Untitled',
+            'timestamp': capture_request.timestamp or datetime.now(timezone.utc).isoformat(),
             'intent': 'learn',  # Default intent
             'user_note': '',
             'capture_id': capture_id,
-            'capture_type': request.type.value,
+            'capture_type': capture_request.type.value,
             'processed_metadata': processed_capture
         }
         
         # Simple thread detection (mock implementation for now)
         thread_assignment = ThreadAssignment(
-            thread_id=request.thread_id,
+            thread_id=capture_request.thread_id,
             thread_name=f"Research Thread",
             confidence=0.8,
             assignment_type="suggested",
-            suggested_thread_name=f"{request.type.value.replace('_', ' ').title()} Research"
+            suggested_thread_name=f"{capture_request.type.value.replace('_', ' ').title()} Research"
         )
         
         # Create timeline entry
         timeline_entry = TimelineEntry(
             capture_id=capture_id,
             timestamp=normalized_capture['timestamp'],
-            capture_type=request.type,
-            source_title=request.title or 'Untitled',
-            source_url=request.source_url,
-            content_preview=request.content[:200] + "..." if len(request.content) > 200 else request.content,
+            capture_type=capture_request.type,
+            source_title=capture_request.title or 'Untitled',
+            source_url=capture_request.source_url,
+            content_preview=capture_request.content[:200] + "..." if len(capture_request.content) > 200 else capture_request.content,
             resume_context=processed_capture.get('resume_context'),
             quick_actions=[
-                f"Continue {request.type.value.replace('_', ' ')}",
+                f"Continue {capture_request.type.value.replace('_', ' ')}",
                 "Add to research notes",
                 "Share with team"
             ]
@@ -876,12 +884,16 @@ async def process_universal_capture(request: UniversalCaptureRequest):
         
         processing_time = time.time() - start_time
         
+        # Get rate limit info for response headers
+        rate_info = getattr(request.state, 'rate_limit_info', {})
+        
         logger.info(f"✅ Capture processed successfully")
         logger.info(f"   Capture ID: {capture_id}")
         logger.info(f"   Thread: {thread_assignment.suggested_thread_name}")
         logger.info(f"   Processing time: {processing_time:.3f}s")
+        logger.info(f"   Rate limit: {rate_info.get('current_requests', 0)}/{rate_info.get('limit', 30)}")
         
-        return UniversalCaptureResponse(
+        response = UniversalCaptureResponse(
             success=True,
             capture_id=capture_id,
             thread_assignment=thread_assignment,
@@ -896,6 +908,11 @@ async def process_universal_capture(request: UniversalCaptureRequest):
             timestamp=datetime.now(timezone.utc).isoformat()
         )
         
+        return response
+        
+    except HTTPException:
+        # Re-raise rate limit and other HTTP exceptions
+        raise
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -906,6 +923,42 @@ async def process_universal_capture(request: UniversalCaptureRequest):
             status_code=500, 
             detail=f"Failed to process capture: {str(e)}"
         )
+
+# Add rate limit status endpoint
+@app.get("/api/v1/rate-limit/{user_id}")
+async def get_rate_limit_status(user_id: str):
+    """Get current rate limit status for a user"""
+    try:
+        allowed, rate_info = rate_limiter.is_allowed(user_id)
+        
+        # Don't actually consume a request for this check
+        if allowed and rate_limit_storage[user_id]:
+            rate_limit_storage[user_id].pop()  # Remove the request we just added
+        
+        return {
+            "user_id": user_id,
+            "rate_limit": rate_info,
+            "status": "within_limit" if allowed else "rate_limited",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Rate limit status error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add middleware to include rate limit headers in all responses
+@app.middleware("http")
+async def add_rate_limit_headers(request: Request, call_next):
+    """Add rate limit headers to responses"""
+    response = await call_next(request)
+    
+    # Add rate limit headers if available
+    if hasattr(request.state, 'rate_limit_info'):
+        rate_info = request.state.rate_limit_info
+        response.headers["X-RateLimit-Limit"] = str(rate_info.get('limit', 30))
+        response.headers["X-RateLimit-Remaining"] = str(rate_info.get('remaining', 0))
+        response.headers["X-RateLimit-Reset"] = str(int(rate_info.get('reset_time', time.time())))
+    
+    return response
 
 @app.post("/api/notes/batch", response_model=BatchResponse)
 async def receive_batch(batch_request: BatchRequest, background_tasks: BackgroundTasks):
