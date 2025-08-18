@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch, MagicMock, PropertyMock
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Import pipeline components
 from main import NoteGenerationPipeline, create_sample_minimal_input
@@ -24,7 +25,12 @@ from nodes.content_analysis import ContentAnalysisNode
 from nodes.knowledge_graph import KnowledgeGraphNode
 from nodes.historical_knowledge_retrieval import HistoricalKnowledgeRetrievalNode
 from nodes.notion_note_generation import NotionNoteGenerationNode
+from nodes.notion.database_manager import NotionDatabaseManager
+from nodes.notion.page_builder import NotionPageBuilder  
+from nodes.notion.block_builder import NotionBlockBuilder
+from nodes.notion.client import NotionClient
 
+load_dotenv()
 
 class TestCompletePipeline:
     """Integration tests for the complete AI learning pipeline"""
@@ -262,10 +268,12 @@ class TestCompletePipeline:
             
             # Mock database creation
             mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = {
-                'id': 'test_database_123',
-                'title': [{'plain_text': 'Smart Notes Database'}]
-            }
+            mock_post.return_value.json.side_effect = [
+                {'id': 'test_database_123', 'title': [{'plain_text': 'Smart Notes Database'}]},
+                {'id': 'content_db_123', 'title': [{'plain_text': 'Content Database'}]},
+                {'id': 'content_page_123', 'properties': {'Content Title': {'title': [{'plain_text': 'Test Content'}]}}},
+                {'id': 'content_page_456', 'properties': {'Content Title': {'title': [{'plain_text': 'Test Content 2'}]}}}
+            ]
             
             # Mock page creation
             mock_patch.return_value.status_code = 200
@@ -273,6 +281,12 @@ class TestCompletePipeline:
                 'id': 'test_page_123',
                 'url': 'https://notion.so/test_page_123'
             }
+
+            # Mock content page creation responses
+            mock_post.return_value.json.side_effect = [
+                {'id': 'test_database_123', 'title': [{'plain_text': 'Smart Notes Database'}]},
+                {'id': 'content_page_123', 'properties': {'Content Title': {'title': [{'plain_text': 'Test Content'}]}}}
+            ]
             
             yield {
                 'get': mock_get,
@@ -332,7 +346,8 @@ class TestCompletePipeline:
                 mock_db_manager.ensure_enhanced_databases_exist.return_value = {
                     'learning_sessions': 'db_sessions_123',
                     'research_topics': 'db_topics_123', 
-                    'concept_library': 'db_concepts_123'
+                    'concept_library': 'db_concepts_123',
+                    'captured_content': 'db_content_123'
                 }
 
                 # Mock topic organizer
@@ -525,6 +540,11 @@ class TestCompletePipeline:
                 'spark': 'curiosity'
             }
             mock_enhancer._create_master_session_synthesis.return_value = mock_llm_responses['notion_session_synthesis']
+
+            mock_page_builder.create_content_pages.return_value = [
+                {'id': 'content_123', 'properties': {'Content Title': {'title': [{'plain_text': 'ML Intro'}]}}},
+                {'id': 'content_456', 'properties': {'Content Title': {'title': [{'plain_text': 'Neural Networks'}]}}}
+            ]
             
             # Run complete pipeline
             result = pipeline.run(sample_learning_session)
@@ -572,6 +592,13 @@ class TestCompletePipeline:
             notion = result['notion_generation']
             assert 'master_session_url' in notion
             assert 'creation_summary' in notion
+
+            # Verify content database results
+            notion = result['notion_generation']
+            assert 'content_pages' in notion
+            creation_summary = notion['creation_summary']
+            assert 'content_pages_created' in creation_summary
+            assert creation_summary['content_pages_created'] > 0
 
     def test_pipeline_error_handling(self, mock_environment):
         """Test pipeline handles errors gracefully"""
@@ -810,6 +837,145 @@ class TestPipelineComponents:
             
             assert 'nodes_created' in exec_result
             assert exec_result['nodes_created']['concepts'] > 0
+
+    def test_content_database_creation(self, mock_environment, mock_notion_api):
+        """Test content database is created with correct schema"""
+        
+        with patch('nodes.notion.client.requests') as mock_requests:
+            mock_requests.get.return_value.status_code = 200
+            mock_requests.post.return_value.status_code = 200
+            mock_requests.post.return_value.json.return_value = {'id': 'content_db_123'}
+        
+        client = NotionClient()
+        manager = NotionDatabaseManager(client)
+        
+        databases = manager.ensure_enhanced_databases_exist()
+        
+        # Should now include content database
+        assert 'captured_content' in databases
+        assert len(databases) == 4  # sessions, topics, concepts, content
+    
+    def test_enhanced_database_schemas(self, mock_environment):
+        """Test all 4 databases are included in schema"""
+
+        manager = NotionDatabaseManager(NotionClient())
+        schemas = manager.database_schemas
+        
+        # Should now have 4 databases
+        expected_dbs = ['learning_sessions', 'research_topics', 'concept_library', 'captured_content']
+        assert all(db in schemas for db in expected_dbs)
+        
+        # Test captured_content schema
+        content_schema = schemas['captured_content']
+        assert 'Content Title' in content_schema['properties']
+        assert 'Source URL' in content_schema['properties']
+        assert 'Content Type' in content_schema['properties']
+        assert 'Related Topics' in content_schema['properties']
+
+    
+    def test_content_page_creation(self, mock_environment, sample_learning_session, mock_notion_api):
+        """Test content pages are created for each capture"""
+
+        with patch('nodes.notion.client.requests') as mock_requests:
+            mock_requests.post.return_value.status_code = 200
+            mock_requests.post.return_value.json.return_value = {
+                'id': 'content_page_123',
+                'properties': {'Content Title': {'title': [{'plain_text': 'Test Title'}]}}
+            }
+            mock_requests.patch.return_value.status_code = 200
+            
+            client = NotionClient()
+            builder = NotionPageBuilder(client)
+            
+            # Mock topic organization
+            topic_org = {
+                'Machine Learning': {
+                    'captures': sample_learning_session[:2]
+                }
+            }
+            
+            content_pages = builder.create_content_pages(
+                sample_learning_session, 
+                'content_db_123', 
+                topic_org
+            )
+            
+            assert len(content_pages) == 4
+
+    
+    def test_topic_pages_include_full_content(self, mock_environment, sample_learning_session, mock_notion_api):
+        """Test topic pages now include full content sections"""
+        
+        with patch('nodes.notion.client.requests') as mock_requests:
+            mock_requests.patch.return_value.status_code = 200
+            
+            client = NotionClient()
+            builder = NotionBlockBuilder(client)
+            
+            topic_data = {
+                'captures': sample_learning_session[:2],
+                'rich_content': {'learning_story': 'test story'}
+            }
+            
+            content_pages = [{'id': 'content_123', 'properties': {'Content Title': {'title': [{'plain_text': 'ML Intro'}]}}}]
+            
+            # Should not raise errors
+            builder.add_rich_topic_content(
+                'page_123',
+                'Machine Learning', 
+                topic_data,
+                {'extracted_concepts': {}},
+                content_pages,
+                'blue'
+            )
+            
+            # Verify content blocks were added
+            mock_requests.patch.assert_called()
+
+    
+    def test_content_type_classification(self):
+        """Test improved content type classification"""
+        
+        builder = NotionPageBuilder(NotionClient())
+        
+        # Test tutorial classification
+        tutorial_capture = {
+            'url': 'https://example.com/how-to-learn-ml',
+            'content': 'step by step tutorial on machine learning',
+            'title': 'ML Tutorial',
+            'metadata': {'domain': 'example.com'}
+        }
+        assert builder._classify_content_type(tutorial_capture) == 'Tutorial'
+        
+        # Test documentation classification  
+        docs_capture = {
+            'url': 'https://docs.python.org/api-reference',
+            'content': 'api reference for python functions',
+            'title': 'Python API Docs',
+            'metadata': {'domain': 'docs.python.org'}
+        }
+        assert builder._classify_content_type(docs_capture) == 'Documentation'
+        
+        # Test research paper classification
+        research_capture = {
+            'url': 'https://arxiv.org/paper123',
+            'content': 'abstract methodology experiment results conclusion references',
+            'title': 'Deep Learning Research',
+            'metadata': {'domain': 'arxiv.org'}
+        }
+        assert builder._classify_content_type(research_capture) == 'Research Paper'
+        
+        # Test blog post classification
+        blog_capture = {
+            'url': 'https://medium.com/@author/my-thoughts',
+            'content': 'in my opinion this is how i think about machine learning',
+            'title': 'My ML Journey',
+            'metadata': {'domain': 'medium.com'}
+        }
+        assert builder._classify_content_type(blog_capture) == 'Blog Post'
+        
+                
+
 
 
 def test_main_pipeline_cli():

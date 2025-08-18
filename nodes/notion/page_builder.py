@@ -442,3 +442,222 @@ class NotionPageBuilder:
             'spark': f"Curiosity about {theme.replace('_', ' ')}",
             'breakthrough': f"Understanding how {concepts[0] if concepts else 'core concepts'} work in practice"
         }
+
+    def create_content_pages(self, raw_captures: List[Dict], content_db_id: str, 
+                        topic_organization: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Create content pages in the captured content database"""
+        content_pages = []
+        
+        for capture in raw_captures:
+            try:
+                # Determine content type
+                content_type = self._classify_content_type(capture)
+                
+                # Get related topics
+                related_topics = []
+                for topic_name, topic_data in topic_organization.items():
+                    if capture in topic_data.get('captures', []):
+                        related_topics.append({"name": str(topic_name)})
+                
+                # Create content page
+                page_data = {
+                    "parent": {"database_id": str(content_db_id)},
+                    "properties": {
+                        "Content Title": {
+                            "title": [{"text": {"content": str(capture.get('title', 'Untitled'))}}]
+                        },
+                        "Source URL": {
+                            "url": capture.get('url') if capture.get('url') != 'unknown' else None
+                        },
+                        "Capture Date": {
+                            "date": {"start": capture.get('metadata', {}).get('timestamp', 
+                                    datetime.now(timezone.utc).isoformat())}
+                        },
+                        "Content Type": {
+                            "select": {"name": content_type}
+                        },
+                        "Word Count": {
+                            "number": len(capture.get('content', '').split())
+                        },
+                        "Related Topics": {
+                            "multi_select": related_topics[:10]  # Limit to 10
+                        },
+                        "Content Preview": {
+                            "rich_text": [{"text": {"content": capture.get('content', '')[:2000]}}]
+                        },
+                        "Processing Status": {
+                            "select": {"name": "Captured"}
+                        }
+                    }
+                }
+                
+                content_page = self.notion_client.create_page(page_data)
+                
+                if content_page:
+                    # Add full content as blocks
+                    self._add_full_content_blocks(content_page['id'], capture)
+                    content_pages.append(content_page)
+                    
+            except Exception as e:
+                self.logger.error(f"Error creating content page for {capture.get('title', 'Unknown')}: {str(e)}")
+                continue
+        
+        return content_pages
+
+    def _classify_content_type(self, capture: Dict) -> str:
+        """Classify content type based on URL patterns, content analysis, and metadata"""
+        url = capture.get('url', '').lower()
+        content = capture.get('content', '').lower()
+        title = capture.get('title', '').lower()
+        metadata = capture.get('metadata', {})
+        
+        # Get domain for analysis
+        domain = metadata.get('domain', '')
+        
+        # Scoring system for flexible classification
+        scores = {
+            'Tutorial': 0,
+            'Documentation': 0, 
+            'Research Paper': 0,
+            'Blog Post': 0,
+            'Article': 0
+        }
+        
+        # Tutorial indicators
+        tutorial_signals = [
+            ('tutorial', 3), ('how to', 3), ('step by step', 3), ('guide', 2),
+            ('walkthrough', 2), ('getting started', 2), ('learn', 1), ('build', 1),
+            ('create', 1), ('example', 1), ('demo', 1)
+        ]
+        
+        # Documentation indicators
+        docs_signals = [
+            ('docs.', 4), ('documentation', 3), ('api reference', 4), ('spec', 2),
+            ('manual', 2), ('reference', 2), ('installation', 2), ('usage', 1),
+            ('configuration', 1), ('parameters', 1)
+        ]
+        
+        # Research paper indicators
+        research_signals = [
+            ('arxiv', 4), ('doi:', 4), ('abstract', 3), ('methodology', 3),
+            ('literature review', 3), ('research', 2), ('study', 2), ('analysis', 1),
+            ('experiment', 2), ('findings', 2), ('conclusion', 1), ('references', 1)
+        ]
+        
+        # Blog post indicators  
+        blog_signals = [
+            ('blog', 3), ('medium.com', 3), ('dev.to', 3), ('hashnode', 3),
+            ('substack', 3), ('posted by', 2), ('author:', 2), ('published', 1),
+            ('opinion', 2), ('thoughts on', 2), ('my experience', 2)
+        ]
+        
+        # Article indicators (more general content)
+        article_signals = [
+            ('news', 2), ('report', 2), ('interview', 2), ('analysis', 1),
+            ('overview', 1), ('introduction', 1), ('explained', 1)
+        ]
+        
+        # Score each type based on signals found
+        all_signals = [
+            ('Tutorial', tutorial_signals),
+            ('Documentation', docs_signals), 
+            ('Research Paper', research_signals),
+            ('Blog Post', blog_signals),
+            ('Article', article_signals)
+        ]
+        
+        # Check URL, title, and content for signals
+        text_sources = [url, title, content[:1000]]  # Limit content check for performance
+        
+        for content_type, signals in all_signals:
+            for signal, weight in signals:
+                for text_source in text_sources:
+                    if signal in text_source:
+                        scores[content_type] += weight
+        
+        # Domain-specific boosters
+        domain_boosts = {
+            'github.io': {'Documentation': 2, 'Tutorial': 1},
+            'readthedocs.io': {'Documentation': 3},
+            'stackoverflow.com': {'Tutorial': 2, 'Article': 1},
+            'wikipedia.org': {'Article': 2},
+            'youtube.com': {'Tutorial': 2},
+            'coursera.org': {'Tutorial': 3},
+            'udemy.com': {'Tutorial': 3},
+            'khan academy': {'Tutorial': 3}
+        }
+        
+        for domain_pattern, boosts in domain_boosts.items():
+            if domain_pattern in domain or domain_pattern in url:
+                for content_type, boost in boosts.items():
+                    scores[content_type] += boost
+        
+        # Content structure analysis
+        content_words = content.split()
+        word_count = len(content_words)
+        
+        # Research papers tend to be longer and more structured
+        if word_count > 3000:
+            scores['Research Paper'] += 1
+        elif word_count > 1500:
+            scores['Article'] += 1
+        
+        # Look for code blocks (indicates tutorial/documentation)
+        if '```' in content or '<code>' in content or 'def ' in content:
+            scores['Tutorial'] += 2
+            scores['Documentation'] += 1
+        
+        # Look for academic formatting
+        if any(term in content for term in ['et al.', 'fig.', 'table ', '[1]', '[2]']):
+            scores['Research Paper'] += 2
+        
+        # Personal language indicates blog post
+        if any(term in content for term in ['i think', 'in my opinion', 'i believe', 'my experience']):
+            scores['Blog Post'] += 2
+        
+        # Find the highest scoring type
+        best_type = max(scores.items(), key=lambda x: x[1])
+        
+        # If no clear winner (all scores are low), default based on context
+        if best_type[1] < 3:
+            # Use simple fallbacks
+            if 'blog' in url or 'medium' in url:
+                return 'Blog Post'
+            elif 'docs' in url:
+                return 'Documentation' 
+            elif word_count > 2000:
+                return 'Article'
+            else:
+                return 'General'
+        
+        return best_type[0]
+
+
+    def _add_full_content_blocks(self, page_id: str, capture: Dict):
+        """Add full content to content page"""
+        content = capture.get('content', '')
+        
+        blocks = [
+            {
+                "object": "block",
+                "type": "heading_1",
+                "heading_1": {
+                    "rich_text": [{"type": "text", "text": {"content": "📄 Full Content"}}]
+                }
+            }
+        ]
+        
+        # Split content into chunks (Notion 2000 char limit per block)
+        chunk_size = 1800
+        content_chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
+        
+        for chunk in content_chunks:
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": chunk}}]
+                }
+            })
+        
+        self.notion_client.add_blocks_to_page(page_id, blocks)

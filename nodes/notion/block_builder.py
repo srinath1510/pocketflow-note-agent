@@ -24,7 +24,7 @@ class NotionBlockBuilder:
             self.llm_client = None
     
     def add_rich_topic_content(self, page_id: str, topic_name: str, topic_data: Dict[str, Any], 
-                              pipeline_data: Dict[str, Any], color_theme: str):
+                              pipeline_data: Dict[str, Any], content_pages: List[Dict], color_theme: str):
         """Add memory-focused content to topic page"""
         rich_content = topic_data.get('rich_content', {})
         
@@ -46,7 +46,7 @@ class NotionBlockBuilder:
         blocks.extend(self._create_topic_curiosity_questions(rich_content, topic_name))
         
         # Sources with context
-        blocks.extend(self._create_contextual_sources_section(topic_data))
+        blocks.extend(self._create_contextual_sources_section(topic_data, content_pages))
         
         # Spaced repetition schedule
         blocks.extend(self._create_spaced_review_section(rich_content))
@@ -512,8 +512,8 @@ Return only the questions, one per line."""
         
         return blocks
     
-    def _create_contextual_sources_section(self, topic_data):
-        """Create sources section with context"""
+    def _create_contextual_sources_section(self, topic_data: Dict, content_pages: List[Dict]) -> List[Dict]:
+        """Create sources section with full content access"""
         blocks = []
         
         captures = topic_data.get('captures', [])
@@ -524,39 +524,105 @@ Return only the questions, one per line."""
             "object": "block",
             "type": "heading_2",
             "heading_2": {
-                "rich_text": [{"type": "text", "text": {"content": "📚 Learning Sources"}}]
+                "rich_text": [{"type": "text", "text": {"content": "📖 Sources & Saved Content"}}]
             }
         })
         
         for capture in captures[:5]:  # Limit to 5 most important
             title = capture.get('title', 'Untitled Source')
             url = capture.get('url', '')
-            content_preview = capture.get('content', '')[:100] + "..." if len(capture.get('content', '')) > 100 else capture.get('content', '')
+            content = capture.get('content', '')
+            content_page_url = self._find_content_page_url(capture, content_pages)
+
             
             if url and url != 'unknown':
                 blocks.append({
                     "object": "block",
-                    "type": "callout",
-                    "callout": {
+                    "type": "paragraph",
+                    "paragraph": {
                         "rich_text": [
-                            {"type": "text", "text": {"content": f"📖 {title}\n{content_preview}", "link": {"url": url}}}
-                        ],
-                        "icon": {"emoji": "📖"},
-                        "color": "gray_background"
+                            {"type": "text", "text": {"content": f"🔗 "}, "annotations": {"bold": True}},
+                            {"type": "text", "text": {"content": title, "link": {"url": url}}, "annotations": {"bold": True}}
+                        ]
                     }
                 })
             else:
                 blocks.append({
                     "object": "block",
-                    "type": "callout",
-                    "callout": {
-                        "rich_text": [{"type": "text", "text": {"content": f"📄 {title}\n{content_preview}"}}],
-                        "icon": {"emoji": "📄"},
-                        "color": "gray_background"
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": f"📄 {title}"}, "annotations": {"bold": True}}
+                        ]
                     }
                 })
+            
+            # Key excerpt (first 300 chars)
+            excerpt = content[:300] + "..." if len(content) > 300 else content
+            blocks.append({
+                "object": "block",
+                "type": "quote",
+                "quote": {
+                    "rich_text": [{"type": "text", "text": {"content": excerpt}}],
+                    "color": "gray"
+                }
+            })
+
+            # Full content in toggle
+            content_chunks = [content[i:i+1800] for i in range(0, len(content), 1800)]
+            toggle_children = []
+            
+            for chunk in content_chunks:
+                toggle_children.append({
+                    "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": chunk}}]
+                }
+            })
+        
+            blocks.append({
+                "object": "block",
+                "type": "toggle",
+                "toggle": {
+                    "rich_text": [{"type": "text", "text": {"content": "📄 View Full Content"}}],
+                    "children": toggle_children
+                }
+            })
+            
+            # Link to dedicated content page if available
+            if content_page_url:
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": "📋 "}, "annotations": {"color": "blue"}},
+                            {"type": "text", "text": {"content": "View in Content Database", "link": {"url": content_page_url}}, "annotations": {"color": "blue"}}
+                        ]
+                    }
+                })
+            
+            # Add divider
+            blocks.append({
+                "object": "block",
+                "type": "divider",
+                "divider": {}
+            })
         
         return blocks
+
+    
+    def _find_content_page_url(self, capture: Dict, content_pages: List[Dict]) -> str:
+        """Find URL for corresponding content page"""
+        capture_title = capture.get('title', '')
+        
+        for page in content_pages:
+            page_title = page.get('properties', {}).get('Content Title', {}).get('title', [{}])[0].get('plain_text', '')
+            if capture_title == page_title:
+                return self._get_page_url(page)
+    
+        return ""
     
     def _create_spaced_review_section(self, rich_content: Dict) -> List[Dict]:
         """Create spaced repetition review schedule"""
