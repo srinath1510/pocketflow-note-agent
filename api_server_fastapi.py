@@ -611,6 +611,42 @@ class RateLimiter:
 
 rate_limiter = RateLimiter()
 
+async def check_rate_limit(request: Request, capture_request: UniversalCaptureRequest) -> UniversalCaptureRequest:
+    """
+    Rate limiting dependency for capture endpoints
+    
+    Raises HTTPException if rate limit exceeded
+    """
+    user_id = capture_request.user_id
+    allowed, rate_info = rate_limiter.is_allowed(user_id)
+    
+    if not allowed:
+        # Add rate limit headers to the exception
+        headers = {
+            "X-RateLimit-Limit": str(rate_info['limit']),
+            "X-RateLimit-Remaining": str(rate_info['remaining']),
+            "X-RateLimit-Reset": str(int(rate_info['reset_time'])),
+            "Retry-After": str(int(rate_info['reset_time'] - time.time()))
+        }
+        
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "Rate limit exceeded",
+                "message": f"Too many requests. Limit: {rate_info['limit']} requests per {rate_info['window_seconds']} seconds",
+                "rate_limit": rate_info,
+                "retry_after_seconds": int(rate_info['reset_time'] - time.time())
+            },
+            headers=headers
+        )
+    
+    # Add rate limit info to request headers for successful requests
+    if hasattr(request, 'state'):
+        request.state.rate_limit_info = rate_info
+    
+    return capture_request
+
+    
 def serialize_for_json(obj):
     """Convert datetime objects and other non-serializable objects to JSON-safe formats"""
     if isinstance(obj, datetime):
