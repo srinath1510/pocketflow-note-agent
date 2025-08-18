@@ -256,6 +256,45 @@ class UniversalCaptureRequest(BaseModel):
             }
         }
     )
+
+
+class ThreadAssignment(BaseModel):
+    """Thread assignment information"""
+    thread_id: Optional[str] = None
+    thread_name: Optional[str] = None
+    confidence: float = 0.0
+    assignment_type: Literal["existing", "new", "suggested"] = "suggested"
+    suggested_thread_name: Optional[str] = None
+
+class TimelineEntry(BaseModel):
+    """Timeline entry for research continuity"""
+    capture_id: str
+    timestamp: str
+    capture_type: CaptureType
+    source_title: str
+    source_url: Optional[str] = None
+    content_preview: str
+    resume_context: Optional[Dict[str, Any]] = None
+    quick_actions: List[str] = []
+
+class MinimalInsight(BaseModel):
+    """Minimal, actionable insight"""
+    capture_id: str
+    key_concepts: List[str] = []
+    actionable_items: List[str] = []
+    connections: List[str] = []
+
+class UniversalCaptureResponse(BaseModel):
+    """Response for universal capture endpoint"""
+    success: bool
+    capture_id: str
+    thread_assignment: ThreadAssignment
+    timeline_entry: TimelineEntry
+    minimal_insights: List[MinimalInsight] = []
+    next_actions: List[str] = []
+    processing_time: float
+    timestamp: str
+
 # Utility functions
 
 def serialize_for_json(obj):
