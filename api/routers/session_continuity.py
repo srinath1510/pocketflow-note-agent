@@ -2,22 +2,18 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional
 import logging
 
-from models.session import (
+from ..models.session import (
     ContinuationContext, 
     ThreadTimeline, 
     ResumeContext, 
     SessionBoundary
 )
-from services.session_manager import session_manager
+from ..services.session_manager import session_manager
 
 logger = logging.getLogger(__name__)
 
 # Create router
-router = APIRouter(
-    prefix="/api/v1",
-    tags=["Session Continuity"],
-    responses={404: {"description": "Not found"}}
-)
+router = APIRouter()
 
 @router.get("/continue/{thread_id}", 
            response_model=ContinuationContext,
@@ -89,7 +85,7 @@ async def get_thread_timeline(
             detail=f"Failed to get thread timeline: {str(e)}"
         )
 
-@router.get("/capture/{capture_id}/resume", 
+@router.get("/capture/{capture_id}", 
            response_model=Optional[ResumeContext],
            summary="Get capture resume context",
            description="Get resume context for a specific capture")
@@ -127,7 +123,7 @@ async def get_capture_resume_context(capture_id: str):
             detail=f"Failed to get capture resume context: {str(e)}"
         )
 
-@router.get("/threads/{thread_id}/sessions",
+@router.get("/boundaries/{thread_id}",
            summary="Get thread session boundaries",
            description="Get session boundary detection for research continuity")
 async def get_thread_sessions(
@@ -166,7 +162,7 @@ async def get_thread_sessions(
             detail=f"Failed to get thread sessions: {str(e)}"
         )
 
-@router.get("/threads/{thread_id}/resume-points",
+@router.get("/resume-points/{thread_id}",
            summary="Get quick resume points",
            description="Get prioritized resume points for quick research continuation")
 async def get_thread_resume_points(
@@ -220,7 +216,7 @@ async def get_thread_resume_points(
             detail=f"Failed to get resume points: {str(e)}"
         )
 
-@router.post("/threads/{thread_id}/mark-resumed",
+@router.post("/mark-resumed/{thread_id}",
             summary="Mark content as resumed",
             description="Mark a capture/session as resumed for tracking")
 async def mark_content_resumed(
