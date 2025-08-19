@@ -1070,7 +1070,7 @@ async def process_universal_capture(
             'processed_metadata': processed_capture
         }
         
-        # Simple thread detection (mock implementation for now)
+        # Simple thread detection
         thread_assignment = ThreadAssignment(
             thread_id=capture_request.thread_id,
             thread_name=f"Research Thread",
@@ -1078,6 +1078,20 @@ async def process_universal_capture(
             assignment_type="suggested",
             suggested_thread_name=f"{capture_request.type.value.replace('_', ' ').title()} Research"
         )
+
+         # If thread_id provided, update thread activity
+        if request.thread_id:
+            thread_manager.update_thread_activity(
+                request.user_id, 
+                request.thread_id, 
+                capture_added=True
+            )
+            # Set as active thread
+            active_threads[request.user_id] = request.thread_id
+        
+        # Update normalized_capture to include thread_id
+        normalized_capture['thread_id'] = request.thread_id
+
         
         # Create timeline entry
         timeline_entry = TimelineEntry(
