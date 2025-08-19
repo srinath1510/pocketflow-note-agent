@@ -533,6 +533,183 @@ class SessionManager:
         except:
             return False
 
+    def _calculate_resume_priority(self, resume_point: Dict[str, Any]) -> float:
+        """Calculate priority score for resume points (0-1, higher = more important)"""
+        score = 0.0
+        
+        # Base score by content type (videos and PDFs get higher priority)
+        content_type = resume_point.get('type', 'web_content')
+        type_scores = {
+            'youtube_video': 0.4,
+            'pdf_reading': 0.35,
+            'ai_chat': 0.3,
+            'web_content': 0.2,
+            'quick_note': 0.1
+        }
+        score += type_scores.get(content_type, 0.2)
+        
+        # Recency boost (more recent = higher priority)
+        timestamp = resume_point.get('timestamp', '')
+        if timestamp:
+            try:
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                hours_ago = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+                
+                if hours_ago < 2:      # Very recent
+                    score += 0.3
+                elif hours_ago < 24:   # Same day
+                    score += 0.2
+                elif hours_ago < 72:   # Last 3 days
+                    score += 0.1
+            except:
+                pass
+        
+        # Progress-based boost (partially complete content gets priority)
+        resume_type = resume_point.get('resume_type', 'web')
+        if resume_type == 'video':
+            # Video with progress gets boost
+            score += 0.2
+        elif resume_type == 'pdf':
+            # PDF in progress gets boost
+            score += 0.15
+        
+        # Title-based keywords (learning-related content)
+        title = resume_point.get('title', '').lower()
+        learning_keywords = ['tutorial', 'guide', 'learn', 'course', 'lesson', 'training']
+        if any(keyword in title for keyword in learning_keywords):
+            score += 0.1
+        
+        return min(score, 1.0)  # Cap at 1.0
+    
+    def _get_current_timestamp(self) -> str:
+        """Get current timestamp in ISO format"""
+        return datetime.now(timezone.utc).isoformat()
+    
+    def get_thread_activity_summary(self, user_id: str, thread_id: str) -> Dict[str, Any]:
+        """Get activity summary for a thread (useful for analytics)"""
+        try:
+            captures = self._get_thread_captures(user_id, thread_id)
+            
+            if not captures:
+                return {
+                    'thread_id': thread_id,
+                    'total_captures': 0,
+                    'activity_summary': 'No activity'
+                }
+            
+            # Time-based analysis
+            timestamps = [c.get('timestamp', '') for c in captures if c.get('timestamp')]
+            timestamps.sort()
+            
+            # Content type distribution
+            content_types = {}
+            for capture in captures:
+                ctype = capture.get('capture_type', 'web_content')
+                content_types[ctype] = content_types.get(ctype, 0) + 1
+            
+            # Session analysis
+            sessions = self._detect_session_boundaries(captures)
+            active_sessions = [s for s in sessions if s.is_active]
+            
+            # Recent activity (last 7 days)
+            recent_captures = [c for c in captures if self._is_recent(c.get('timestamp', ''), days=7)]
+            
+            return {
+                'thread_id': thread_id,
+                'total_captures': len(captures),
+                'content_type_distribution': content_types,
+                'session_count': len(sessions),
+                'active_sessions': len(active_sessions),
+                'recent_activity_count': len(recent_captures),
+                'date_range': {
+                    'first_capture': timestamps[0] if timestamps else None,
+                    'last_capture': timestamps[-1] if timestamps else None
+                },
+                'average_session_length': self._calculate_average_session_length(sessions)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting activity summary: {str(e)}")
+            return {
+                'thread_id': thread_id,
+                'error': str(e)
+            }
+    
+    def _calculate_average_session_length(self, sessions: List[SessionBoundary]) -> Optional[float]:
+        """Calculate average session length in minutes"""
+        durations = [s.duration_minutes for s in sessions if s.duration_minutes]
+        return sum(durations) / len(durations) if durations else None
+    
+    def detect_session_patterns(self, user_id: str, thread_id: str) -> Dict[str, Any]:
+        """Detect research patterns for the user (advanced analytics)"""
+        try:
+            captures = self._get_thread_captures(user_id, thread_id)
+            sessions = self._detect_session_boundaries(captures)
+            
+            # Analyze session patterns
+            patterns = {
+                'thread_id': thread_id,
+                'pattern_analysis': {}
+            }
+            
+            if not sessions:
+                patterns['pattern_analysis']['status'] = 'insufficient_data'
+                return patterns
+            
+            # Time patterns
+            session_times = []
+            for session in sessions:
+                if session.start_time:
+                    try:
+                        dt = datetime.fromisoformat(session.start_time.replace('Z', '+00:00'))
+                        session_times.append(dt.hour)
+                    except:
+                        continue
+            
+            if session_times:
+                patterns['pattern_analysis']['preferred_hours'] = {
+                    'morning': len([h for h in session_times if 6 <= h < 12]),
+                    'afternoon': len([h for h in session_times if 12 <= h < 18]),
+                    'evening': len([h for h in session_times if 18 <= h < 24]),
+                    'night': len([h for h in session_times if 0 <= h < 6])
+                }
+            
+            # Session length patterns
+            durations = [s.duration_minutes for s in sessions if s.duration_minutes]
+            if durations:
+                avg_duration = sum(durations) / len(durations)
+                patterns['pattern_analysis']['session_behavior'] = {
+                    'average_duration_minutes': round(avg_duration, 1),
+                    'short_sessions': len([d for d in durations if d < 15]),
+                    'medium_sessions': len([d for d in durations if 15 <= d < 60]),
+                    'long_sessions': len([d for d in durations if d >= 60])
+                }
+            
+            # Content type preferences
+            content_preferences = {}
+            for capture in captures:
+                ctype = capture.get('capture_type', 'web_content')
+                content_preferences[ctype] = content_preferences.get(ctype, 0) + 1
+            
+            if content_preferences:
+                total_captures = sum(content_preferences.values())
+                patterns['pattern_analysis']['content_preferences'] = {
+                    ctype: {
+                        'count': count,
+                        'percentage': round((count / total_captures) * 100, 1)
+                    }
+                    for ctype, count in content_preferences.items()
+                }
+            
+            return patterns
+            
+        except Exception as e:
+            self.logger.error(f"Error detecting session patterns: {str(e)}")
+            return {
+                'thread_id': thread_id,
+                'error': str(e)
+            }
+    
     
 # Initialize session manager
 session_manager = SessionManager()
