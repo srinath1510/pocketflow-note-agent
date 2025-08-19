@@ -3,7 +3,7 @@ FastAPI API Server for Smart Notes Extension
 Migrated from Flask with async support and automatic documentation
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ConfigDict
@@ -19,8 +19,19 @@ import sys
 import hashlib
 import asyncio
 from collections import defaultdict
+from enum import Enum
+from typing import Literal
+import time
 
 from pipeline_orchestrator import PipelineOrchestrator
+
+# Rate limiting storage and configuration
+rate_limit_storage = defaultdict(list)
+RATE_LIMIT_WINDOW = 60  # 1 minute window
+RATE_LIMIT_MAX_REQUESTS = 30  # 30 requests per minute per user
+RATE_LIMIT_CLEANUP_INTERVAL = 300  # Clean up old entries every 5 minutes
+last_cleanup_time = time.time()
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -218,7 +229,423 @@ class ErrorResponse(BaseModel):
     error_type: Optional[str] = None
     debug: Optional[str] = None
 
-# Utility functions
+class CaptureType(str, Enum):
+    """Supported capture types for multi-modal content"""
+    WEB_CONTENT = "web_content"
+    AI_CHAT = "ai_chat"
+    PDF_READING = "pdf_reading"
+    YOUTUBE_VIDEO = "youtube_video"
+    QUICK_NOTE = "quick_note"
+
+class UniversalCaptureRequest(BaseModel):
+    """Universal capture request supporting all content types"""
+    type: CaptureType = Field(..., description="Type of content being captured")
+    content: str = Field(..., min_length=1, description="The captured content")
+    user_id: str = Field(..., min_length=1, description="User identifier")
+    source_url: Optional[str] = Field(None, description="Source URL if applicable")
+    title: Optional[str] = Field("Untitled", description="Content title")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Capture-specific metadata")
+    thread_id: Optional[str] = Field(None, description="Research thread assignment")
+    timestamp: Optional[str] = Field(None, description="Capture timestamp")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "type": "web_content",
+                "content": "Machine learning is a method of data analysis that automates analytical model building.",
+                "user_id": "researcher_123",
+                "source_url": "https://example.com/ml-intro",
+                "title": "Introduction to Machine Learning",
+                "metadata": {
+                    "reading_time": 5,
+                    "scroll_position": 0.75,
+                    "highlights": ["analytical model building"]
+                }
+            }
+        }
+    )
+
+
+class ThreadAssignment(BaseModel):
+    """Thread assignment information"""
+    thread_id: Optional[str] = None
+    thread_name: Optional[str] = None
+    confidence: float = 0.0
+    assignment_type: Literal["existing", "new", "suggested"] = "suggested"
+    suggested_thread_name: Optional[str] = None
+
+class TimelineEntry(BaseModel):
+    """Timeline entry for research continuity"""
+    capture_id: str
+    timestamp: str
+    capture_type: CaptureType
+    source_title: str
+    source_url: Optional[str] = None
+    content_preview: str
+    resume_context: Optional[Dict[str, Any]] = None
+    quick_actions: List[str] = []
+
+class MinimalInsight(BaseModel):
+    """Minimal, actionable insight"""
+    capture_id: str
+    key_concepts: List[str] = []
+    actionable_items: List[str] = []
+    connections: List[str] = []
+
+class UniversalCaptureResponse(BaseModel):
+    """Response for universal capture endpoint"""
+    success: bool
+    capture_id: str
+    thread_assignment: ThreadAssignment
+    timeline_entry: TimelineEntry
+    minimal_insights: List[MinimalInsight] = []
+    next_actions: List[str] = []
+    processing_time: float
+    timestamp: str
+
+# Content type processors class
+class ContentTypeProcessor:
+    """Process different types of captured content"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+    
+    def process_capture(self, request: UniversalCaptureRequest) -> Dict[str, Any]:
+        """Process capture based on type"""
+        processors = {
+            CaptureType.WEB_CONTENT: self._process_web_content,
+            CaptureType.AI_CHAT: self._process_ai_conversation,
+            CaptureType.PDF_READING: self._process_pdf_session,
+            CaptureType.YOUTUBE_VIDEO: self._process_video_learning,
+            CaptureType.QUICK_NOTE: self._process_manual_note
+        }
+        
+        processor = processors.get(request.type, self._process_web_content)
+        return processor(request)
+    
+    def _process_web_content(self, request: UniversalCaptureRequest) -> Dict[str, Any]:
+        """Process web article/content"""
+        metadata = request.metadata or {}
+        
+        return {
+            'content_type': 'web_content',
+            'processed_content': request.content,
+            'source_metadata': {
+                'url': request.source_url,
+                'title': request.title,
+                'domain': self._extract_domain(request.source_url or ''),
+                'reading_time': metadata.get('reading_time', 0),
+                'scroll_position': metadata.get('scroll_position', 0),
+                'highlights': metadata.get('highlights', [])
+            },
+            'thread_signals': self._extract_topic_keywords(request.content),
+            'resume_context': {
+                'resume_type': 'web',
+                'url': request.source_url,
+                'scroll_position': metadata.get('scroll_position', 0),
+                'reading_progress': metadata.get('reading_progress', 0)
+            }
+        }
+    
+    def _process_ai_conversation(self, request: UniversalCaptureRequest) -> Dict[str, Any]:
+        """Process AI chat conversation"""
+        metadata = request.metadata or {}
+        
+        return {
+            'content_type': 'ai_conversation',
+            'user_questions': self._extract_user_questions(request.content),
+            'key_answers': self._extract_key_answers(request.content),
+            'practical_insights': self._extract_actionable_items(request.content),
+            'conversation_metadata': {
+                'platform': metadata.get('platform', 'unknown'),
+                'session_length': metadata.get('session_length', 0),
+                'conversation_id': metadata.get('conversation_id'),
+                'user_satisfaction': metadata.get('user_satisfaction')
+            },
+            'thread_signals': self._extract_topic_keywords(request.content),
+            'resume_context': {
+                'resume_type': 'ai_chat',
+                'platform': metadata.get('platform'),
+                'conversation_url': request.source_url,
+                'last_question': self._get_last_user_question(request.content)
+            }
+        }
+    
+    def _process_pdf_session(self, request: UniversalCaptureRequest) -> Dict[str, Any]:
+        """Process PDF reading session"""
+        metadata = request.metadata or {}
+        
+        return {
+            'content_type': 'pdf_reading',
+            'document_title': request.title,
+            'pages_read': metadata.get('page_range', []),
+            'user_highlights': metadata.get('highlights', []),
+            'user_annotations': metadata.get('annotations', []),
+            'reading_progress': metadata.get('progress_percentage', 0),
+            'session_duration': metadata.get('reading_time_minutes', 0),
+            'document_metadata': {
+                'total_pages': metadata.get('total_pages'),
+                'author': metadata.get('author'),
+                'publication_date': metadata.get('publication_date'),
+                'document_type': metadata.get('document_type', 'pdf')
+            },
+            'thread_signals': self._extract_topic_keywords(request.content),
+            'resume_context': {
+                'resume_type': 'pdf',
+                'document_url': request.source_url,
+                'last_page': metadata.get('last_page_read'),
+                'reading_progress': metadata.get('progress_percentage', 0)
+            }
+        }
+    
+    def _process_video_learning(self, request: UniversalCaptureRequest) -> Dict[str, Any]:
+        """Process YouTube learning session"""
+        metadata = request.metadata or {}
+        
+        return {
+            'content_type': 'video_learning',
+            'video_title': request.title,
+            'channel': metadata.get('channel', 'Unknown'),
+            'watched_duration': metadata.get('watched_minutes', 0),
+            'total_duration': metadata.get('total_minutes', 0),
+            'user_notes_timestamps': metadata.get('timestamped_notes', []),
+            'key_segments': self._extract_learning_segments(metadata),
+            'video_metadata': {
+                'video_id': metadata.get('video_id'),
+                'channel_id': metadata.get('channel_id'),
+                'category': metadata.get('category', 'Education'),
+                'language': metadata.get('language', 'en')
+            },
+            'thread_signals': self._extract_topic_keywords(request.content),
+            'resume_context': {
+                'resume_type': 'video',
+                'video_id': metadata.get('video_id'),
+                'last_timestamp': metadata.get('last_watched_timestamp', 0),
+                'resume_url': self._build_youtube_resume_url(
+                    metadata.get('video_id'), 
+                    metadata.get('last_watched_timestamp', 0)
+                )
+            }
+        }
+    
+    def _process_manual_note(self, request: UniversalCaptureRequest) -> Dict[str, Any]:
+        """Process quick manual note"""
+        metadata = request.metadata or {}
+        
+        return {
+            'content_type': 'quick_note',
+            'note_text': request.content,
+            'note_context': metadata.get('context', 'general'),
+            'user_intent': metadata.get('intent', 'thought'),
+            'location_context': metadata.get('location'),
+            'related_activity': metadata.get('related_activity'),
+            'note_metadata': {
+                'input_method': metadata.get('input_method', 'typing'),
+                'note_length': len(request.content),
+                'urgency': metadata.get('urgency', 'normal')
+            },
+            'thread_signals': self._extract_topic_keywords(request.content),
+            'resume_context': {
+                'resume_type': 'note',
+                'context': metadata.get('context'),
+                'related_url': request.source_url
+            }
+        }
+    
+    # Helper methods
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL"""
+        if not url or url == 'unknown':
+            return 'unknown'
+        try:
+            from urllib.parse import urlparse
+            return urlparse(url).netloc
+        except:
+            return 'unknown'
+    
+    def _extract_topic_keywords(self, content: str) -> List[str]:
+        """Simple keyword extraction for thread detection"""
+        # Simple implementation - could be enhanced with NLP
+        keywords = []
+        content_lower = content.lower()
+        
+        # Tech keywords
+        tech_keywords = ['python', 'javascript', 'react', 'machine learning', 'ai', 'database', 'api', 'neural network']
+        for keyword in tech_keywords:
+            if keyword in content_lower:
+                keywords.append(keyword)
+        
+        return keywords[:5]  # Limit to 5 keywords
+    
+    def _extract_user_questions(self, content: str) -> List[str]:
+        """Extract user questions from AI conversation"""
+        questions = []
+        lines = content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.endswith('?') and len(line) > 10:
+                questions.append(line)
+        return questions[:3]  # Top 3 questions
+    
+    def _extract_key_answers(self, content: str) -> List[str]:
+        """Extract key answers from AI conversation"""
+        # Simple implementation - look for sentences with key phrases
+        answers = []
+        sentences = content.split('.')
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if any(phrase in sentence.lower() for phrase in ['the key is', 'important to', 'you should']):
+                answers.append(sentence + '.')
+        return answers[:3]  # Top 3 answers
+    
+    def _extract_actionable_items(self, content: str) -> List[str]:
+        """Extract actionable items"""
+        actions = []
+        lines = content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if any(starter in line.lower() for starter in ['try', 'implement', 'use', 'create', 'build']):
+                actions.append(line)
+        return actions[:2]  # Top 2 actions
+    
+    def _get_last_user_question(self, content: str) -> str:
+        """Get the last question user asked"""
+        questions = self._extract_user_questions(content)
+        return questions[-1] if questions else ""
+    
+    def _extract_learning_segments(self, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract key learning segments from video"""
+        segments = []
+        timestamped_notes = metadata.get('timestamped_notes', [])
+        for note in timestamped_notes:
+            segments.append({
+                'timestamp': note.get('timestamp', 0),
+                'description': note.get('note', ''),
+                'importance': 'high' if 'important' in note.get('note', '').lower() else 'medium'
+            })
+        return segments
+    
+    def _build_youtube_resume_url(self, video_id: str, timestamp: int) -> str:
+        """Build YouTube URL with timestamp"""
+        if video_id and timestamp:
+            return f"https://youtube.com/watch?v={video_id}&t={timestamp}s"
+        return ""
+
+content_processor = ContentTypeProcessor()
+
+class RateLimiter:
+    """Simple in-memory rate limiter"""
+    
+    def __init__(self, max_requests: int = RATE_LIMIT_MAX_REQUESTS, window_seconds: int = RATE_LIMIT_WINDOW):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.logger = logging.getLogger(__name__)
+    
+    def is_allowed(self, user_id: str) -> tuple[bool, Dict[str, Any]]:
+        """
+        Check if request is allowed and return rate limit info
+        
+        Returns:
+            (allowed: bool, info: dict)
+        """
+        current_time = time.time()
+        
+        # Clean up old entries periodically
+        self._cleanup_old_entries(current_time)
+        
+        # Get user's request history
+        user_requests = rate_limit_storage[user_id]
+        
+        # Remove requests outside the time window
+        cutoff_time = current_time - self.window_seconds
+        user_requests[:] = [req_time for req_time in user_requests if req_time > cutoff_time]
+        
+        # Check if under limit
+        request_count = len(user_requests)
+        allowed = request_count < self.max_requests
+        
+        if allowed:
+            # Add current request time
+            user_requests.append(current_time)
+        
+        # Calculate rate limit info
+        window_start = current_time - self.window_seconds
+        requests_in_window = len(user_requests)
+        remaining = max(0, self.max_requests - requests_in_window)
+        reset_time = min(user_requests) + self.window_seconds if user_requests else current_time + self.window_seconds
+        
+        rate_limit_info = {
+            'allowed': allowed,
+            'limit': self.max_requests,
+            'remaining': remaining,
+            'reset_time': reset_time,
+            'window_seconds': self.window_seconds,
+            'current_requests': requests_in_window
+        }
+        
+        if not allowed:
+            self.logger.warning(f"Rate limit exceeded for user {user_id}: {requests_in_window}/{self.max_requests} requests")
+        
+        return allowed, rate_limit_info
+    
+    def _cleanup_old_entries(self, current_time: float):
+        """Clean up old rate limit entries"""
+        global last_cleanup_time
+        
+        if current_time - last_cleanup_time > RATE_LIMIT_CLEANUP_INTERVAL:
+            cutoff_time = current_time - self.window_seconds * 2  # Keep extra buffer
+            
+            # Clean up old entries for all users
+            users_to_remove = []
+            for user_id, requests in rate_limit_storage.items():
+                requests[:] = [req_time for req_time in requests if req_time > cutoff_time]
+                if not requests:
+                    users_to_remove.append(user_id)
+            
+            # Remove users with no recent requests
+            for user_id in users_to_remove:
+                del rate_limit_storage[user_id]
+            
+            last_cleanup_time = current_time
+            self.logger.info(f"Rate limit cleanup completed. Active users: {len(rate_limit_storage)}")
+
+rate_limiter = RateLimiter()
+
+async def check_rate_limit(request: Request, capture_request: UniversalCaptureRequest) -> UniversalCaptureRequest:
+    """
+    Rate limiting dependency for capture endpoints
+    
+    Raises HTTPException if rate limit exceeded
+    """
+    user_id = capture_request.user_id
+    allowed, rate_info = rate_limiter.is_allowed(user_id)
+    
+    if not allowed:
+        # Add rate limit headers to the exception
+        headers = {
+            "X-RateLimit-Limit": str(rate_info['limit']),
+            "X-RateLimit-Remaining": str(rate_info['remaining']),
+            "X-RateLimit-Reset": str(int(rate_info['reset_time'])),
+            "Retry-After": str(int(rate_info['reset_time'] - time.time()))
+        }
+        
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "Rate limit exceeded",
+                "message": f"Too many requests. Limit: {rate_info['limit']} requests per {rate_info['window_seconds']} seconds",
+                "rate_limit": rate_info,
+                "retry_after_seconds": int(rate_info['reset_time'] - time.time())
+            },
+            headers=headers
+        )
+    
+    # Add rate limit info to request headers for successful requests
+    if hasattr(request, 'state'):
+        request.state.rate_limit_info = rate_info
+    
+    return capture_request
+
 
 def serialize_for_json(obj):
     """Convert datetime objects and other non-serializable objects to JSON-safe formats"""
@@ -373,6 +800,165 @@ async def get_status():
     except Exception as e:
         logger.error(f"Status endpoint error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/capture", response_model=UniversalCaptureResponse)
+async def process_universal_capture(
+    request: Request,
+    capture_request: UniversalCaptureRequest = Depends(check_rate_limit)
+):
+    """
+    Universal capture endpoint supporting all content types with rate limiting
+    
+    Rate Limits:
+    - 30 requests per minute per user
+    - Returns 429 status when exceeded
+    - Includes rate limit headers in response
+    
+    Handles: web content, AI chats, PDF reading, YouTube videos, manual notes
+    Returns: thread assignment, timeline entry, and minimal insights
+    """
+    start_time = time.time()
+    
+    try:
+        logger.info(f"=== UNIVERSAL CAPTURE REQUEST ===")
+        logger.info(f"Type: {capture_request.type}")
+        logger.info(f"User: {capture_request.user_id}")
+        logger.info(f"Content length: {len(capture_request.content)}")
+        
+        # Generate capture ID
+        capture_id = str(uuid.uuid4())
+        
+        # Process content based on type
+        processed_capture = content_processor.process_capture(capture_request)
+        
+        # Create normalized capture for pipeline
+        normalized_capture = {
+            'content': capture_request.content,
+            'user_id': capture_request.user_id,
+            'source_url': capture_request.source_url or 'unknown',
+            'title': capture_request.title or 'Untitled',
+            'timestamp': capture_request.timestamp or datetime.now(timezone.utc).isoformat(),
+            'intent': 'learn',  # Default intent
+            'user_note': '',
+            'capture_id': capture_id,
+            'capture_type': capture_request.type.value,
+            'processed_metadata': processed_capture
+        }
+        
+        # Simple thread detection (mock implementation for now)
+        thread_assignment = ThreadAssignment(
+            thread_id=capture_request.thread_id,
+            thread_name=f"Research Thread",
+            confidence=0.8,
+            assignment_type="suggested",
+            suggested_thread_name=f"{capture_request.type.value.replace('_', ' ').title()} Research"
+        )
+        
+        # Create timeline entry
+        timeline_entry = TimelineEntry(
+            capture_id=capture_id,
+            timestamp=normalized_capture['timestamp'],
+            capture_type=capture_request.type,
+            source_title=capture_request.title or 'Untitled',
+            source_url=capture_request.source_url,
+            content_preview=capture_request.content[:200] + "..." if len(capture_request.content) > 200 else capture_request.content,
+            resume_context=processed_capture.get('resume_context'),
+            quick_actions=[
+                f"Continue {capture_request.type.value.replace('_', ' ')}",
+                "Add to research notes",
+                "Share with team"
+            ]
+        )
+        
+        # Generate minimal insights (mock for now)
+        minimal_insights = [MinimalInsight(
+            capture_id=capture_id,
+            key_concepts=processed_capture.get('thread_signals', [])[:3],
+            actionable_items=processed_capture.get('practical_insights', [])[:2],
+            connections=[]
+        )]
+        
+        # Store capture (add to existing storage)
+        notes_storage.append(normalized_capture)
+        
+        processing_time = time.time() - start_time
+        
+        # Get rate limit info for response headers
+        rate_info = getattr(request.state, 'rate_limit_info', {})
+        
+        logger.info(f"✅ Capture processed successfully")
+        logger.info(f"   Capture ID: {capture_id}")
+        logger.info(f"   Thread: {thread_assignment.suggested_thread_name}")
+        logger.info(f"   Processing time: {processing_time:.3f}s")
+        logger.info(f"   Rate limit: {rate_info.get('current_requests', 0)}/{rate_info.get('limit', 30)}")
+        
+        response = UniversalCaptureResponse(
+            success=True,
+            capture_id=capture_id,
+            thread_assignment=thread_assignment,
+            timeline_entry=timeline_entry,
+            minimal_insights=minimal_insights,
+            next_actions=[
+                "Continue research in this thread",
+                "Review related captures",
+                "Add more context"
+            ],
+            processing_time=processing_time,
+            timestamp=datetime.now(timezone.utc).isoformat()
+        )
+        
+        return response
+        
+    except HTTPException:
+        # Re-raise rate limit and other HTTP exceptions
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Universal capture error: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to process capture: {str(e)}"
+        )
+
+# Add rate limit status endpoint
+@app.get("/api/v1/rate-limit/{user_id}")
+async def get_rate_limit_status(user_id: str):
+    """Get current rate limit status for a user"""
+    try:
+        allowed, rate_info = rate_limiter.is_allowed(user_id)
+        
+        # Don't actually consume a request for this check
+        if allowed and rate_limit_storage[user_id]:
+            rate_limit_storage[user_id].pop()  # Remove the request we just added
+        
+        return {
+            "user_id": user_id,
+            "rate_limit": rate_info,
+            "status": "within_limit" if allowed else "rate_limited",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Rate limit status error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add middleware to include rate limit headers in all responses
+@app.middleware("http")
+async def add_rate_limit_headers(request: Request, call_next):
+    """Add rate limit headers to responses"""
+    response = await call_next(request)
+    
+    # Add rate limit headers if available
+    if hasattr(request.state, 'rate_limit_info'):
+        rate_info = request.state.rate_limit_info
+        response.headers["X-RateLimit-Limit"] = str(rate_info.get('limit', 30))
+        response.headers["X-RateLimit-Remaining"] = str(rate_info.get('remaining', 0))
+        response.headers["X-RateLimit-Reset"] = str(int(rate_info.get('reset_time', time.time())))
+    
+    return response
 
 @app.post("/api/notes/batch", response_model=BatchResponse)
 async def receive_batch(batch_request: BatchRequest, background_tasks: BackgroundTasks):
