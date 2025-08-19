@@ -89,6 +89,8 @@ for dir_path in [NOTES_DIR, BATCHES_DIR, RESULTS_DIR]:
 # In-memory storage
 notes_storage = []
 batches_storage = []
+threads_storage = {}  # user_id -> Dict[thread_id, thread_data]
+active_threads = {}   # user_id -> active_thread_id
 processing_results = []
 processed_batches = set()
 processed_bakes = set()
@@ -646,6 +648,228 @@ async def check_rate_limit(request: Request, capture_request: UniversalCaptureRe
     
     return capture_request
 
+class ResearchThread(BaseModel):
+    """Research thread model"""
+    id: str
+    user_id: str
+    name: str
+    emoji: str = "📚"
+    domain: Optional[str] = None
+    progress_score: float = 0.0
+    created_at: str
+    last_active: str
+    capture_count: int = 0
+    topics: List[str] = []
+    status: Literal["active", "paused", "completed", "archived"] = "active"
+    
+class ThreadSwitchRequest(BaseModel):
+    """Thread context switching request"""
+    user_id: str
+    from_thread_id: Optional[str] = None
+    to_thread_id: str
+    
+class ThreadCreateRequest(BaseModel):
+    """Thread creation request"""
+    user_id: str
+    name: str
+    emoji: str = "📚"
+    domain: Optional[str] = None
+    initial_topics: List[str] = []
+    
+class ThreadUpdateRequest(BaseModel):
+    """Thread update request"""
+    name: Optional[str] = None
+    emoji: Optional[str] = None
+    domain: Optional[str] = None
+    status: Optional[Literal["active", "paused", "completed", "archived"]] = None
+    topics: Optional[List[str]] = None
+
+class ThreadsResponse(BaseModel):
+    """Response for thread listing"""
+    threads: List[ResearchThread]
+    active_thread: Optional[ResearchThread] = None
+    total_count: int
+    by_status: Dict[str, int]
+
+class ThreadSwitchResponse(BaseModel):
+    """Response for thread switching"""
+    success: bool
+    from_thread: Optional[ResearchThread] = None
+    to_thread: ResearchThread
+    context_summary: Dict[str, Any]
+    switch_timestamp: str
+
+class ThreadManager:
+    """Manages research threads and context switching"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+    
+    def get_user_threads(self, user_id: str) -> List[ResearchThread]:
+        """Get all threads for a user"""
+        user_threads = threads_storage.get(user_id, {})
+        return [ResearchThread(**thread) for thread in user_threads.values()]
+    
+    def get_active_thread(self, user_id: str) -> Optional[ResearchThread]:
+        """Get user's active thread"""
+        active_thread_id = active_threads.get(user_id)
+        if active_thread_id and user_id in threads_storage:
+            thread_data = threads_storage[user_id].get(active_thread_id)
+            if thread_data:
+                return ResearchThread(**thread_data)
+        return None
+    
+    def create_thread(self, request: ThreadCreateRequest) -> ResearchThread:
+        """Create new research thread"""
+        thread_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).isoformat()
+        
+        thread_data = {
+            "id": thread_id,
+            "user_id": request.user_id,
+            "name": request.name,
+            "emoji": request.emoji,
+            "domain": request.domain,
+            "progress_score": 0.0,
+            "created_at": timestamp,
+            "last_active": timestamp,
+            "capture_count": 0,
+            "topics": request.initial_topics,
+            "status": "active"
+        }
+        
+        # Initialize user threads storage if needed
+        if request.user_id not in threads_storage:
+            threads_storage[request.user_id] = {}
+        
+        threads_storage[request.user_id][thread_id] = thread_data
+        
+        # Set as active if user has no active thread
+        if request.user_id not in active_threads:
+            active_threads[request.user_id] = thread_id
+        
+        self.logger.info(f"Created thread {thread_id} for user {request.user_id}: {request.name}")
+        return ResearchThread(**thread_data)
+    
+    def update_thread(self, user_id: str, thread_id: str, update: ThreadUpdateRequest) -> Optional[ResearchThread]:
+        """Update existing thread"""
+        if user_id not in threads_storage or thread_id not in threads_storage[user_id]:
+            return None
+        
+        thread_data = threads_storage[user_id][thread_id]
+        
+        # Update fields if provided
+        if update.name is not None:
+            thread_data["name"] = update.name
+        if update.emoji is not None:
+            thread_data["emoji"] = update.emoji
+        if update.domain is not None:
+            thread_data["domain"] = update.domain
+        if update.status is not None:
+            thread_data["status"] = update.status
+        if update.topics is not None:
+            thread_data["topics"] = update.topics
+        
+        thread_data["last_active"] = datetime.now(timezone.utc).isoformat()
+        
+        self.logger.info(f"Updated thread {thread_id} for user {user_id}")
+        return ResearchThread(**thread_data)
+    
+    def delete_thread(self, user_id: str, thread_id: str) -> bool:
+        """Delete thread"""
+        if user_id not in threads_storage or thread_id not in threads_storage[user_id]:
+            return False
+        
+        del threads_storage[user_id][thread_id]
+        
+        # Clear active thread if it was deleted
+        if active_threads.get(user_id) == thread_id:
+            remaining_threads = list(threads_storage[user_id].keys())
+            active_threads[user_id] = remaining_threads[0] if remaining_threads else None
+        
+        self.logger.info(f"Deleted thread {thread_id} for user {user_id}")
+        return True
+    
+    def switch_context(self, request: ThreadSwitchRequest) -> Dict[str, Any]:
+        """Switch user's active thread context"""
+        from_thread = None
+        if request.from_thread_id:
+            from_thread_data = threads_storage.get(request.user_id, {}).get(request.from_thread_id)
+            if from_thread_data:
+                from_thread = ResearchThread(**from_thread_data)
+        
+        # Get target thread
+        to_thread_data = threads_storage.get(request.user_id, {}).get(request.to_thread_id)
+        if not to_thread_data:
+            raise ValueError(f"Thread {request.to_thread_id} not found")
+        
+        to_thread = ResearchThread(**to_thread_data)
+        
+        # Update active thread
+        active_threads[request.user_id] = request.to_thread_id
+        
+        # Update last_active timestamp
+        to_thread_data["last_active"] = datetime.now(timezone.utc).isoformat()
+        
+        # Create context summary
+        context_summary = {
+            "previous_captures": self._get_recent_captures(request.user_id, request.from_thread_id) if request.from_thread_id else [],
+            "target_thread_captures": self._get_recent_captures(request.user_id, request.to_thread_id),
+            "suggested_actions": self._generate_context_switch_actions(from_thread, to_thread)
+        }
+        
+        self.logger.info(f"Switched context for user {request.user_id}: {request.from_thread_id} -> {request.to_thread_id}")
+        
+        return {
+            "from_thread": from_thread,
+            "to_thread": to_thread,
+            "context_summary": context_summary
+        }
+    
+    def update_thread_activity(self, user_id: str, thread_id: str, capture_added: bool = False):
+        """Update thread activity when captures are added"""
+        if user_id in threads_storage and thread_id in threads_storage[user_id]:
+            thread_data = threads_storage[user_id][thread_id]
+            thread_data["last_active"] = datetime.now(timezone.utc).isoformat()
+            
+            if capture_added:
+                thread_data["capture_count"] = thread_data.get("capture_count", 0) + 1
+                # Simple progress calculation
+                thread_data["progress_score"] = min(1.0, thread_data["capture_count"] * 0.1)
+    
+    def _get_recent_captures(self, user_id: str, thread_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get recent captures for a thread"""
+        if not thread_id:
+            return []
+        
+        # Filter captures by thread_id and user_id
+        thread_captures = [
+            capture for capture in notes_storage 
+            if capture.get("user_id") == user_id and 
+               capture.get("thread_id") == thread_id
+        ]
+        
+        # Sort by timestamp and return recent ones
+        thread_captures.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        return thread_captures[:limit]
+    
+    def _generate_context_switch_actions(self, from_thread: Optional[ResearchThread], to_thread: ResearchThread) -> List[str]:
+        """Generate suggested actions for context switch"""
+        actions = []
+        
+        if from_thread:
+            actions.append(f"Save progress in '{from_thread.name}' thread")
+        
+        actions.extend([
+            f"Review recent activity in '{to_thread.name}'",
+            f"Continue research on: {', '.join(to_thread.topics[:3]) if to_thread.topics else 'general topics'}",
+            "Add new captures to this thread"
+        ])
+        
+        return actions
+
+thread_manager = ThreadManager()
+
 
 def serialize_for_json(obj):
     """Convert datetime objects and other non-serializable objects to JSON-safe formats"""
@@ -846,7 +1070,7 @@ async def process_universal_capture(
             'processed_metadata': processed_capture
         }
         
-        # Simple thread detection (mock implementation for now)
+        # Simple thread detection
         thread_assignment = ThreadAssignment(
             thread_id=capture_request.thread_id,
             thread_name=f"Research Thread",
@@ -854,6 +1078,20 @@ async def process_universal_capture(
             assignment_type="suggested",
             suggested_thread_name=f"{capture_request.type.value.replace('_', ' ').title()} Research"
         )
+
+         # If thread_id provided, update thread activity
+        if request.thread_id:
+            thread_manager.update_thread_activity(
+                request.user_id, 
+                request.thread_id, 
+                capture_added=True
+            )
+            # Set as active thread
+            active_threads[request.user_id] = request.thread_id
+        
+        # Update normalized_capture to include thread_id
+        normalized_capture['thread_id'] = request.thread_id
+
         
         # Create timeline entry
         timeline_entry = TimelineEntry(
@@ -1564,6 +1802,104 @@ async def save_individual_notes_background(notes: List[Dict[str, Any]], batch_id
     except Exception as e:
         logger.error(f"Error in background file saving: {str(e)}")
 
+
+@app.get("/api/v1/threads/{user_id}", response_model=ThreadsResponse)
+async def get_user_threads(user_id: str):
+    """Get all research threads for a user"""
+    try:
+        threads = thread_manager.get_user_threads(user_id)
+        active_thread = thread_manager.get_active_thread(user_id)
+        
+        # Calculate status counts
+        status_counts = {"active": 0, "paused": 0, "completed": 0, "archived": 0}
+        for thread in threads:
+            status_counts[thread.status] += 1
+        
+        return ThreadsResponse(
+            threads=threads,
+            active_thread=active_thread,
+            total_count=len(threads),
+            by_status=status_counts
+        )
+    except Exception as e:
+        logger.error(f"Error getting threads for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/threads/switch", response_model=ThreadSwitchResponse)
+async def switch_thread_context(request: ThreadSwitchRequest):
+    """Switch between research threads"""
+    try:
+        result = thread_manager.switch_context(request)
+        
+        return ThreadSwitchResponse(
+            success=True,
+            from_thread=result["from_thread"],
+            to_thread=result["to_thread"],
+            context_summary=result["context_summary"],
+            switch_timestamp=datetime.now(timezone.utc).isoformat()
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error switching thread context: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/threads", response_model=ResearchThread)
+async def create_thread(request: ThreadCreateRequest):
+    """Create new research thread"""
+    try:
+        # Validate thread name
+        if not request.name or len(request.name.strip()) < 2:
+            raise HTTPException(status_code=400, detail="Thread name must be at least 2 characters")
+        
+        thread = thread_manager.create_thread(request)
+        return thread
+    except Exception as e:
+        logger.error(f"Error creating thread: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/v1/threads/{user_id}/{thread_id}", response_model=ResearchThread)
+async def update_thread(user_id: str, thread_id: str, update: ThreadUpdateRequest):
+    """Update research thread"""
+    try:
+        thread = thread_manager.update_thread(user_id, thread_id, update)
+        if not thread:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        return thread
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating thread: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/v1/threads/{user_id}/{thread_id}")
+async def delete_thread(user_id: str, thread_id: str):
+    """Delete research thread"""
+    try:
+        success = thread_manager.delete_thread(user_id, thread_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        
+        return {
+            "success": True,
+            "message": f"Thread {thread_id} deleted",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting thread: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/threads/{user_id}/active", response_model=Optional[ResearchThread])
+async def get_active_thread(user_id: str):
+    """Get user's currently active thread"""
+    try:
+        active_thread = thread_manager.get_active_thread(user_id)
+        return active_thread
+    except Exception as e:
+        logger.error(f"Error getting active thread: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 # Application startup
 @app.on_event("startup")
 async def startup_event():
