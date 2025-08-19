@@ -89,6 +89,8 @@ for dir_path in [NOTES_DIR, BATCHES_DIR, RESULTS_DIR]:
 # In-memory storage
 notes_storage = []
 batches_storage = []
+threads_storage = {}  # user_id -> Dict[thread_id, thread_data]
+active_threads = {}   # user_id -> active_thread_id
 processing_results = []
 processed_batches = set()
 processed_bakes = set()
