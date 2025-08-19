@@ -10,7 +10,7 @@ import sys
 import traceback
 import time
 
-from .routers import capture, threads, legacy
+from .routers import capture, threads, legacy, session_continuity
 from .models.responses import HealthResponse
 from .utils.storage import notes_storage, batches_storage, processing_results
 
@@ -62,6 +62,7 @@ app.add_middleware(
 app.include_router(capture.router, prefix="/api/v1/capture", tags=["capture"])
 app.include_router(threads.router, prefix="/api/v1/threads", tags=["threads"])
 app.include_router(legacy.router, prefix="/api", tags=["legacy"])
+app.include_router(session_continuity.router, prefix="/api/v1/sessions", tags=["session-continuity"])
 
 # Initialize pipeline orchestrator
 try:
