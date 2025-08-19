@@ -3,6 +3,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from collections import defaultdict
 import uuid
+from ..models.session import (
+    ContinuationContext, 
+    ThreadTimeline, 
+    ResumeContext, 
+    SessionBoundary,
+    TimelineEntryDetail,
+)
 
 class SessionManager:
     """Manages session continuity and timeline"""
