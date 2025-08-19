@@ -10,6 +10,25 @@ from ..models.session import (
     SessionBoundary,
     TimelineEntryDetail,
 )
+from ..utils.storage import notes_storage, threads_storage
+
+import logging
+logger = logging.getLogger(__name__)
+
+def debug_import():
+    try:
+        logger.info("Current working directory: " + str(__file__))
+        logger.info("Attempting import...")
+        from ..utils.storage import notes_storage, threads_storage
+        logger.info(f"✅ Import successful! notes_storage length: {len(notes_storage)}")
+        return notes_storage, threads_storage
+    except ImportError as e:
+        logger.error(f"❌ Import failed: {str(e)}")
+        logger.error(f"Available modules: {list(sys.modules.keys())}")
+        return [], {}
+
+# Call at the top of your class
+notes_storage, threads_storage = debug_import()
 
 class SessionManager:
     """Manages session continuity and timeline"""
@@ -23,9 +42,7 @@ class SessionManager:
     def get_continuation_context(self, user_id: str, thread_id: str) -> ContinuationContext:
         """Get context for resuming research in a thread"""
         try:
-            # Get thread captures
-            from utils.storage import notes_storage, threads_storage
-            
+            # Get thread captures            
             thread_captures = self._get_thread_captures(user_id, thread_id)
             
             if not thread_captures:
@@ -78,8 +95,6 @@ class SessionManager:
     def get_thread_timeline(self, user_id: str, thread_id: str, limit: int = 50) -> ThreadTimeline:
         """Get detailed timeline for a research thread"""
         try:
-            from utils.storage import notes_storage, threads_storage
-            
             # Get thread data
             thread_data = threads_storage.get(user_id, {}).get(thread_id, {})
             thread_name = thread_data.get('name', 'Research Thread')
@@ -130,8 +145,6 @@ class SessionManager:
     def get_capture_resume_context(self, capture_id: str) -> Optional[ResumeContext]:
         """Get resume context for a specific capture"""
         try:
-            from utils.storage import notes_storage
-            
             # Find capture
             capture = None
             for note in notes_storage:
@@ -171,8 +184,6 @@ class SessionManager:
     
     def _get_thread_captures(self, user_id: str, thread_id: str) -> List[Dict[str, Any]]:
         """Get all captures for a thread"""
-        from utils.storage import notes_storage
-        
         return [
             capture for capture in notes_storage
             if capture.get('user_id') == user_id and capture.get('thread_id') == thread_id
