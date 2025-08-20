@@ -10,7 +10,9 @@ from ..models.session import (
     SessionBoundary,
     TimelineEntryDetail,
 )
-from ..utils.storage import notes_storage, threads_storage
+
+from database.manager import get_db
+from database.repositories import ThreadRepository, CaptureRepository, TimelineEntryRepository
 
 import logging
 logger = logging.getLogger(__name__)
@@ -93,48 +95,59 @@ class SessionManager:
             )
     
     def get_thread_timeline(self, user_id: str, thread_id: str, limit: int = 50) -> ThreadTimeline:
-        """Get detailed timeline for a research thread"""
+        """Get detailed timeline for a research thread from database"""
         try:
+            db = next(get_db())
+            thread_repo = ThreadRepository(db)
+            timeline_repo = TimelineRepository(db)
+            
             # Get thread data
-            thread_data = threads_storage.get(user_id, {}).get(thread_id, {})
-            thread_name = thread_data.get('name', 'Research Thread')
+            thread = thread_repo.get_thread_by_id(thread_id, user_id)
+            if not thread:
+                raise ValueError(f"Thread {thread_id} not found")
             
-            # Get and sort captures
-            thread_captures = self._get_thread_captures(user_id, thread_id)
-            thread_captures.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            # Get timeline entries from database
+            timeline_entries_db = timeline_repo.get_thread_timeline(user_id, thread_id, limit)
             
-            # Limit results
-            limited_captures = thread_captures[:limit]
-            
-            # Create detailed timeline entries
+            # Convert to response format
             timeline_entries = []
-            for capture in limited_captures:
-                entry = self._create_timeline_entry(capture, thread_id)
-                timeline_entries.append(entry)
+            for entry in timeline_entries_db:
+                timeline_entry = TimelineEntryDetail(
+                    capture_id=str(entry.capture_id),
+                    thread_id=str(entry.thread_id),
+                    timestamp=entry.timestamp.isoformat(),
+                    capture_type=entry.capture.capture_type if entry.capture else 'unknown',
+                    source_title=entry.capture.title if entry.capture else 'Unknown',
+                    source_url=entry.capture.source_url if entry.capture else None,
+                    content_preview=entry.capture.content[:200] + "..." if entry.capture and len(entry.capture.content) > 200 else entry.capture.content if entry.capture else "",
+                    resume_context=self._build_resume_context_from_db(entry),
+                    session_context=entry.session_context or {},
+                    quick_actions=entry.quick_actions or [],
+                    related_captures=[]
+                )
+                timeline_entries.append(timeline_entry)
             
-            # Detect session boundaries
-            session_boundaries = self._detect_session_boundaries(thread_captures)
+            # Get session boundaries
+            captures = self._get_thread_captures(user_id, thread_id)
+            session_boundaries = self._detect_session_boundaries(captures)
             
-            # Calculate date range
-            if thread_captures:
-                dates = [capture.get('timestamp', '') for capture in thread_captures if capture.get('timestamp')]
-                date_range = {
-                    'earliest': min(dates) if dates else '',
-                    'latest': max(dates) if dates else ''
-                }
-            else:
-                date_range = {'earliest': '', 'latest': ''}
-            
-            # Progress indicators
-            progress_indicators = self._calculate_progress_indicators(thread_captures, thread_data)
+            # Calculate progress
+            progress_indicators = {
+                'total_captures': len(captures),
+                'progress_score': thread.progress_score,
+                'activity_trend': 'active' if session_boundaries and session_boundaries[-1].is_active else 'inactive'
+            }
             
             return ThreadTimeline(
                 thread_id=thread_id,
-                thread_name=thread_name,
+                thread_name=thread.name,
                 timeline_entries=timeline_entries,
                 session_boundaries=session_boundaries,
-                total_entries=len(thread_captures),
-                date_range=date_range,
+                total_entries=len(timeline_entries),
+                date_range={
+                    'earliest': timeline_entries[-1].timestamp if timeline_entries else '',
+                    'latest': timeline_entries[0].timestamp if timeline_entries else ''
+                },
                 progress_indicators=progress_indicators
             )
             
@@ -143,93 +156,95 @@ class SessionManager:
             raise
     
     def get_capture_resume_context(self, capture_id: str) -> Optional[ResumeContext]:
-        """Get resume context for a specific capture"""
+        """Get resume context for a specific capture from database"""
         try:
-            # Find capture
-            capture = None
-            for note in notes_storage:
-                if note.get('capture_id') == capture_id:
-                    capture = note
-                    break
+            db = next(get_db())
+            capture_repo = CaptureRepository(db)
+            capture = capture_repo.get_capture_by_id(capture_id)
             
             if not capture:
                 return None
             
-            # Extract resume context from processed metadata
-            processed_metadata = capture.get('processed_metadata', {})
-            resume_context_data = processed_metadata.get('resume_context', {})
-            
-            if not resume_context_data:
-                return None
-            
-            # Build resume actions based on type
+            # Build resume context from database data
             resume_actions = self._build_resume_actions(
-                capture.get('capture_type', 'web_content'),
-                resume_context_data,
+                capture.capture_type,
+                capture.resume_context or {},
                 capture
             )
             
             return ResumeContext(
-                resume_type=resume_context_data.get('resume_type', 'web'),
-                source_url=capture.get('source_url'),
-                last_position=resume_context_data,
-                progress_percentage=resume_context_data.get('reading_progress', 0),
-                user_context=capture.get('user_note', ''),
+                resume_type=capture.resume_context.get('resume_type', 'web') if capture.resume_context else 'web',
+                source_url=capture.source_url,
+                last_position=capture.resume_context or {},
+                progress_percentage=capture.resume_context.get('reading_progress', 0) if capture.resume_context else 0,
+                user_context=capture.user_note or '',
                 resume_actions=resume_actions
             )
-            
+                
         except Exception as e:
             self.logger.error(f"Error getting capture resume context: {str(e)}")
             return None
     
     def _get_thread_captures(self, user_id: str, thread_id: str) -> List[Dict[str, Any]]:
-        """Get all captures for a thread"""
-        return [
-            capture for capture in notes_storage
-            if capture.get('user_id') == user_id and capture.get('thread_id') == thread_id
-        ]
+        """Get all captures for a thread from database"""
+        try:
+            db = next(get_db())
+            capture_repo = CaptureRepository(db)
+            captures = capture_repo.get_thread_captures(user_id, thread_id)
+        
+            # Convert SQLAlchemy objects to dicts for compatibility
+            return [
+                {
+                    'capture_id': str(capture.id),
+                    'user_id': capture.user_id,
+                    'thread_id': str(capture.thread_id) if capture.thread_id else None,
+                    'content': capture.content,
+                    'title': capture.title,
+                    'source_url': capture.source_url,
+                    'capture_type': capture.capture_type,
+                    'timestamp': capture.captured_at.isoformat(),
+                    'processed_metadata': capture.processed_meta or {},
+                    'resume_context': capture.resume_context or {},
+                    'user_note': capture.user_note or ''
+                }
+                for capture in captures
+            ]
+        except Exception as e:
+            self.logger.error(f"Database error getting thread captures: {str(e)}")
+            return []
     
     def _detect_session_boundaries(self, captures: List[Dict[str, Any]]) -> List[SessionBoundary]:
-        """Detect natural session boundaries in captures"""
+        """Use database session repository for boundary detection"""
         if not captures:
             return []
         
-        # Sort by timestamp
-        sorted_captures = sorted(captures, key=lambda x: x.get('timestamp', ''))
-        sessions = []
-        current_session_captures = []
-        
-        # Session gap threshold (2 hours)
-        session_gap_hours = 2
-        
-        for i, capture in enumerate(sorted_captures):
-            if not current_session_captures:
-                current_session_captures.append(capture)
-                continue
+        try:
+            # Get user_id and thread_id from first capture
+            user_id = captures[0].get('user_id')
+            thread_id = captures[0].get('thread_id')
             
-            # Check time gap from last capture
-            last_capture = current_session_captures[-1]
-            time_gap = self._calculate_time_gap(
-                last_capture.get('timestamp', ''),
-                capture.get('timestamp', '')
-            )
+            if not user_id or not thread_id:
+                return []
             
-            if time_gap > session_gap_hours * 3600:  # Gap > 2 hours
-                # End current session
-                session = self._create_session_boundary(current_session_captures)
-                sessions.append(session)
-                
-                # Start new session
-                current_session_captures = [capture]
-            else:
-                current_session_captures.append(capture)
-        
-        # Add final session
-        if current_session_captures:
-            session = self._create_session_boundary(current_session_captures)
-            sessions.append(session)
-        
-        return sessions
+            db = next(get_db())
+            session_repo = SessionRepository(db)
+            sessions_data = session_repo.detect_session_boundaries(user_id, thread_id)
+            
+            # Convert to SessionBoundary objects
+            return [
+                SessionBoundary(
+                    session_id=str(uuid.uuid4()),
+                    start_time=session['start_time'].isoformat(),
+                    end_time=session['end_time'].isoformat() if session['end_time'] else None,
+                    duration_minutes=session['duration_minutes'],
+                    capture_count=session['capture_count'],
+                    is_active=session['is_active']
+                )
+                for session in sessions_data
+            ]
+        except Exception as e:
+            self.logger.error(f"Error detecting session boundaries: {str(e)}")
+            return []
     
     def _create_session_boundary(self, captures: List[Dict[str, Any]]) -> SessionBoundary:
         """Create session boundary from captures"""
@@ -728,6 +743,30 @@ class SessionManager:
                 'error': str(e)
             }
     
+    def _get_thread_data(self, user_id: str, thread_id: str) -> Optional[Dict[str, Any]]:
+        """Get thread data from database"""
+        try:
+            db = next(get_db())
+            thread_repo = ThreadRepository(db)
+            thread = thread_repo.get_thread_by_id(thread_id, user_id)
+            
+            if thread:
+                return {
+                    'id': str(thread.id),
+                    'name': thread.name,
+                    'emoji': thread.emoji,
+                    'domain': thread.domain,
+                    'progress_score': thread.progress_score,
+                    'capture_count': thread.capture_count,
+                    'status': thread.status,
+                    'created_at': thread.created_at.isoformat(),
+                    'last_active': thread.last_active.isoformat(),
+                    'topics': thread.topics or []
+                }
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting thread data: {str(e)}")
+            return None
     
 # Initialize session manager
 session_manager = SessionManager()
