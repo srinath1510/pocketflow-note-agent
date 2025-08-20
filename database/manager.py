@@ -44,7 +44,7 @@ class DatabaseManager:
     
     def create_all_tables(self):
         """Create all tables"""
-        Base.metadata.create_all(bind=self.engine)
+        Base.metadata.create_all(bind=self.engine, checkfirst=True)
         self.logger.info("All tables created successfully")
     
     def drop_all_tables(self):
