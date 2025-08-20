@@ -12,7 +12,7 @@ from ..models.session import (
 )
 
 from database.manager import get_db
-from database.repositories import ThreadRepository, CaptureRepository, TimelineEntryRepository
+from database.repositories import ThreadRepository, CaptureRepository, TimelineRepository
 
 import logging
 logger = logging.getLogger(__name__)
