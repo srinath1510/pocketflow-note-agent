@@ -12,10 +12,8 @@ def setup_database():
         logger.info("Starting database setup...")
         
         # Create all tables
-        db_manager.create_all_tables()
-        
-        # Run any initial data setup
-        setup_initial_data()
+        logger.info("Creating fresh tables...")
+        Base.metadata.create_all(bind=db_manager.engine, checkfirst=True)
         
         logger.info("Database setup completed successfully")
         
@@ -23,11 +21,6 @@ def setup_database():
         logger.error(f"Database setup failed: {str(e)}")
         raise
 
-def setup_initial_data():
-    """Setup initial data like default user preferences"""
-    with db_manager.get_session() as session:
-        # Add any initial data here
-        pass
 
 if __name__ == "__main__":
     setup_database()
