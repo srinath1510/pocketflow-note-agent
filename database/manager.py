@@ -4,6 +4,8 @@ from contextlib import contextmanager
 import os
 import logging
 
+from models import Base
+
 class DatabaseManager:
     """Database connection and session management"""
     
