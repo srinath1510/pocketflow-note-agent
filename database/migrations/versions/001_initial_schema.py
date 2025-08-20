@@ -30,7 +30,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('last_active', sa.DateTime(timezone=True), nullable=True),
         sa.Column('topics', sa.JSON(), nullable=True),
-        sa.Column('metadata', sa.JSON(), nullable=True),
+        sa.Column('thread_metadata', sa.JSON(), nullable=True),
         sa.CheckConstraint("status IN ('active', 'paused', 'completed', 'archived')", name='valid_status'),
         sa.CheckConstraint('progress_score >= 0.0 AND progress_score <= 1.0', name='valid_progress'),
         sa.PrimaryKeyConstraint('id')
