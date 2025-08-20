@@ -24,7 +24,6 @@ WORKERS = int(os.getenv("API_WORKERS", 1))
 def main():
     """Start the FastAPI server"""
     
-    # Copy global variables to local scope for potential modification
     workers = WORKERS
     
     print("🚀 Smart Notes FastAPI Server")
@@ -39,14 +38,15 @@ def main():
     print(f"  🔧 Health Check: http://{HOST}:{PORT}/api/health")
     print(f"  📚 Interactive Docs: http://{HOST}:{PORT}/docs")
     print(f"  📖 ReDoc: http://{HOST}:{PORT}/redoc")
-    print(f"  🌐 OpenAPI Schema: http://{HOST}:{PORT}/openapi.json")
     print()
-    print("🔄 API Endpoints:")
-    print(f"  POST http://{HOST}:{PORT}/api/notes/batch")
-    print(f"  POST http://{HOST}:{PORT}/api/bake")
-    print(f"  GET  http://{HOST}:{PORT}/api/notes")
-    print(f"  GET  http://{HOST}:{PORT}/api/results")
+    print("🔄 New API Endpoints:")
+    print(f"  POST http://{HOST}:{PORT}/api/v1/capture")
+    print(f"  GET  http://{HOST}:{PORT}/api/v1/threads/{{user_id}}")
+    print(f"  POST http://{HOST}:{PORT}/api/v1/threads/switch")
+    print(f"  GET  http://{HOST}:{PORT}/api/v1/sessions/continue/{{thread_id}}")
+    print(f"  GET  http://{HOST}:{PORT}/api/v1/sessions/timeline/{{thread_id}}")
     print()
+    print("🗄️  Database: PostgreSQL (persistent storage)")
     print("Press Ctrl+C to stop the server")
     print("=" * 50)
     
@@ -62,7 +62,7 @@ def main():
     
     # Start server
     uvicorn.run(
-        "api_server_fastapi:app",
+        "api.main:app",  
         host=HOST,
         port=PORT,
         reload=RELOAD,
