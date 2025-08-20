@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from manager import db_manager
-from models import Base
+from .manager import db_manager
+from .models import Base
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
