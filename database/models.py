@@ -109,11 +109,6 @@ class Capture(Base):
     timeline_entries = relationship("TimelineEntry", back_populates="capture", cascade="all, delete-orphan")
     
     __table_args__ = (
-        Index('ix_captures_user_thread', 'user_id', 'thread_id'),
-        Index('ix_captures_type_intent', 'capture_type', 'intent'),
-        Index('ix_captures_captured_at', 'captured_at'),
-        Index('ix_captures_content_hash', 'content_hash'),
-        Index('ix_captures_processing_status', 'processing_status'),
         UniqueConstraint('content_hash', 'user_id', name='uq_captures_content_user'),
     )
 
