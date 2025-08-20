@@ -26,7 +26,7 @@ class ResearchThread(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_active = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     topics = Column(JSON, default=list)
-    metadata = Column(JSON, default=dict)
+    thread_metadata = Column(JSON, default=dict)
     
     # Relationships
     captures = relationship("Capture", back_populates="thread", cascade="all, delete-orphan")
