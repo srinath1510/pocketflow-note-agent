@@ -1,10 +1,10 @@
-# Pocketflow Notes Pipeline - Requirements
+# BrowserBud Pocketflow Pipeline - Requirements
 # Core dependencies for the complete pipeline with LLM support
 
 # ==========================================
 # Core Pipeline Framework
 # ==========================================
-pocketflow-framework
+pocketflow
 
 # ==========================================
 # Content Processing & Web Scraping
