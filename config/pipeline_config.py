@@ -163,6 +163,32 @@ class PipelineConfig:
                         continue
                 
                 self.config_data[config_key] = value
+        
+        # Validate critical environment variables
+        self._validate_required_env_vars()
+    
+    def _validate_required_env_vars(self):
+        """Validate that required environment variables are set."""
+        required_env_vars = {
+            "NEO4J_URI": "Neo4j database connection URI",
+            "NEO4J_USER": "Neo4j database username", 
+            "NEO4J_PASSWORD": "Neo4j database password",
+            "ANTHROPIC_API_KEY": "Anthropic API key for LLM processing",
+            "NOTION_TOKEN": "Notion integration token"
+        }
+        
+        missing_vars = []
+        for env_var, description in required_env_vars.items():
+            if not os.getenv(env_var):
+                missing_vars.append(f"  {env_var}: {description}")
+        
+        if missing_vars:
+            error_msg = (
+                "Missing required environment variables:\n"
+                + "\n".join(missing_vars) + 
+                "\n\nPlease create a .env file with these variables or set them in your environment."
+            )
+            raise ValueError(error_msg)
     
 
     def _setup_computed_properties(self):
