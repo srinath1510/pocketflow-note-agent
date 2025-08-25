@@ -34,7 +34,10 @@ class KnowledgeGraphNode(BaseNode):
         # Neo4j connection
         self.neo4j_uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
         self.neo4j_user = os.getenv('NEO4J_USER', 'neo4j')
-        self.neo4j_password = os.getenv('NEO4J_PASSWORD', 'smartnotes123')
+        self.neo4j_password = os.getenv('NEO4J_PASSWORD')
+        
+        if not self.neo4j_password:
+            raise ValueError("NEO4J_PASSWORD environment variable is required")
         
         self.driver = None
         self._init_neo4j()
@@ -570,7 +573,11 @@ def test_neo4j_connection():
     try:
         uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
         user = os.getenv('NEO4J_USER', 'neo4j')
-        password = os.getenv('NEO4J_PASSWORD', 'smartnotes123')
+        password = os.getenv('NEO4J_PASSWORD')
+        
+        if not password:
+            print("Error: NEO4J_PASSWORD environment variable not set")
+            return False
         
         driver = GraphDatabase.driver(uri, auth=(user, password))
         with driver.session() as session:

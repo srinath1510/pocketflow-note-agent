@@ -4,6 +4,7 @@ Historical Knowledge Retrieval Node: Connects new learning to existing knowledge
 
 import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, Tuple, Set
 from collections import defaultdict, Counter
@@ -61,12 +62,15 @@ class HistoricalKnowledgeRetrievalNode(BaseNode):
             self.logger.warning("No extracted concepts found for historical analysis")
             return {'error': 'No concepts to analyze historically', 'user_id': user_id}
         
-        # Get Neo4j driver from knowledge graph node
+        # Get Neo4j configuration from environment
         neo4j_config = {
-            'uri': 'bolt://localhost:7687',
-            'user': 'neo4j', 
-            'password': 'smartnotes123'
+            'uri': os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
+            'user': os.getenv('NEO4J_USER', 'neo4j'),
+            'password': os.getenv('NEO4J_PASSWORD')
         }
+        
+        if not neo4j_config['password']:
+            return {'error': 'NEO4J_PASSWORD environment variable is required', 'user_id': user_id}
         
         prep_data = {
             'user_id': user_id,
