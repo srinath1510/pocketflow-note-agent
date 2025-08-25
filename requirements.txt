@@ -17,12 +17,8 @@ urllib3>=1.26.0
 requests>=2.28.0
 
 # ==========================================
-# Web API Server
+# FastAPI
 # ==========================================
-flask==3.0.0
-flask-cors==4.0.0
-
-# FastAPI (New API Server)
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 
