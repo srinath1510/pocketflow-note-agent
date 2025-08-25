@@ -42,7 +42,7 @@ class PipelineConfig:
         """Load default configuration values."""
         self.config_data = {
             "version": "1.0.0",
-            "pipeline_name": "smart_notes_pipeline", 
+            "pipeline_name": "browserbud_pipeline", 
             "data_dir": "data",
             "max_notes_per_batch": 100,
             "content_max_length": 50000,
@@ -144,12 +144,12 @@ class PipelineConfig:
     def _load_from_environment(self):
         """Load configuration overrides from environment variables."""
         env_mappings = {
-            "SMART_NOTES_LOG_LEVEL": "log_level",
-            "SMART_NOTES_LOG_FILE": "log_file",
-            "SMART_NOTES_DATA_DIR": "data_dir",
-            "SMART_NOTES_MAX_CONCURRENT": "max_concurrent_processes",
-            "SMART_NOTES_MAX_NOTES_PER_BATCH": "max_notes_per_batch",
-            "SMART_NOTES_CONTENT_MAX_LENGTH": "content_max_length"
+            "BROWSERBUD_LOG_LEVEL": "log_level",
+            "BROWSERBUD_LOG_FILE": "log_file",
+            "BROWSERBUD_DATA_DIR": "data_dir",
+            "BROWSERBUD_MAX_CONCURRENT": "max_concurrent_processes",
+            "BROWSERBUD_MAX_NOTES_PER_BATCH": "max_notes_per_batch",
+            "BROWSERBUD_CONTENT_MAX_LENGTH": "content_max_length"
         }
         
         for env_var, config_key in env_mappings.items():
@@ -314,7 +314,7 @@ class PipelineConfig:
     @property
     def pipeline_name(self) -> str:
         """Get pipeline name."""
-        return self.get("pipeline_name", default="smart_notes_pipeline")
+        return self.get("pipeline_name", default="browserbud_pipeline")
 
     @property
     def data_dir(self) -> Path:

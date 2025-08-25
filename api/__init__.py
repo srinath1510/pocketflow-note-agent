@@ -1,12 +1,12 @@
 """
-Smart Notes API Package
+BrowserBud API Package
 
 A modular FastAPI application for AI-powered research continuity
 and multi-modal content capture with intelligent thread management.
 """
 
 __version__ = "2.0.0"
-__title__ = "Smart Notes API"
+__title__ = "BrowserBud API"
 __description__ = "AI-powered research continuity assistant"
 
 # Expose main components for easier importing

@@ -27,7 +27,7 @@ def main():
     # Copy global variables to local scope for potential modification
     workers = WORKERS
     
-    print("🚀 Smart Notes FastAPI Server")
+    print("🚀 BrowserBud FastAPI Server")
     print("=" * 50)
     print(f"📊 Host: {HOST}")
     print(f"📊 Port: {PORT}")

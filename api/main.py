@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # FastAPI app with metadata for automatic documentation
 app = FastAPI(
-    title="Smart Notes API",
+    title="BrowserBud API",
     description="""
     AI-powered research continuity assistant that transforms multi-modal captures 
     into organized knowledge with intelligent thread management.
@@ -131,7 +131,7 @@ async def add_rate_limit_headers(request: Request, call_next):
 async def root():
     """Root endpoint with API information"""
     return {
-        "message": "Smart Notes FastAPI Server",
+        "message": "BrowserBud FastAPI Server",
         "version": "2.0.0",
         "server_type": "FastAPI ASGI",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -161,7 +161,7 @@ async def health_check():
             status="healthy",
             timestamp=datetime.now(timezone.utc).isoformat(),
             version="2.0.0",
-            service="smart-notes-api",
+            service="browserbud-api",
             server_type="FastAPI ASGI",
             debug_mode=app.debug,
             endpoints={
@@ -187,7 +187,7 @@ async def get_status():
     """Get detailed server status"""
     try:
         return {
-            "server": "Smart Notes FastAPI API",
+            "server": "BrowserBud FastAPI API",
             "status": "running",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "debug_mode": app.debug,
@@ -212,7 +212,7 @@ async def get_status():
 @app.on_event("startup")
 async def startup_event():
     """Application startup tasks"""
-    logger.info("🚀 FastAPI Smart Notes API Server starting up...")
+    logger.info("🚀 FastAPI BrowserBud API Server starting up...")
     logger.info("📊 Server will run on: http://localhost:8000")
     logger.info("🔧 Health check: http://localhost:8000/api/health")
     logger.info("📚 Interactive docs: http://localhost:8000/docs")
@@ -222,7 +222,7 @@ async def startup_event():
 if __name__ == "__main__":
     import uvicorn
     
-    print("🚀 Starting Smart Notes FastAPI Server...")
+    print("🚀 Starting BrowserBud FastAPI Server...")
     print("📊 Server will run on: http://localhost:8000")
     print("🔧 Health check: http://localhost:8000/api/health")
     print("📚 Interactive docs: http://localhost:8000/docs")

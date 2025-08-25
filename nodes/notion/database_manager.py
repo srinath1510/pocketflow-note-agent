@@ -21,7 +21,7 @@ class NotionDatabaseManager:
         """Initialize enhanced database schemas for topic-based organization"""
         return {
             'learning_sessions': {
-                'title': '🧠 Smart Notes - Learning Sessions',
+                'title': '🧠 BrowserBud - Learning Sessions',
                 'properties': {
                     'Session Title': {'title': {}},
                     'Date': {'date': {}},
@@ -53,7 +53,7 @@ class NotionDatabaseManager:
                 }
             },
             'research_topics': {
-                'title': '📚 Smart Notes - Research Topics',
+                'title': '📚 BrowserBud - Research Topics',
                 'properties': {
                     'Topic Name': {'title': {}},
                     'Domain': {'select': {'options': []}},
@@ -89,7 +89,7 @@ class NotionDatabaseManager:
                 }
             },
             'concept_library': {
-                'title': '💡 Smart Notes - Concept Library',
+                'title': '💡 BrowserBud - Concept Library',
                 'properties': {
                     'Concept Name': {'title': {}},
                     'Topic': {'select': {'options': []}},
@@ -121,7 +121,7 @@ class NotionDatabaseManager:
                 }
             },
             'captured_content': {
-                'title': '📄 Smart Notes - Captured Content',
+                'title': '📄 BrowserBud - Captured Content',
                 'properties': {
                     'Content Title': {'title': {}},
                     'Source URL': {'url': {}},
