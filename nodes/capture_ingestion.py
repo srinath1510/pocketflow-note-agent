@@ -20,7 +20,7 @@ from pocketflow import Node as BaseNode
 
 class CaptureIngestionNode(BaseNode):
     """
-    Updated Capture Ingestion Node
+    Capture Ingestion Node
     
     Purpose: Process minimal capture input and prepare for AI analysis
     
