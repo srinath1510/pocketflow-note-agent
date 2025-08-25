@@ -25,10 +25,10 @@ from nodes.knowledge_graph import KnowledgeGraphNode
 
 class NoteGenerationPipeline:
     """
-    Main pipeline class for orchestrating the AI Note Generation Pipeline.
+    Main pipeline class for orchestrating the BrowserBud Pipeline.
     
     Processes raw browser captures through multiple nodes to generate
-    structured Obsidian notes with comprehensive cross-references.
+    structured Notion notes with comprehensive cross-references.
     """
     
     def __init__(self, config_path: str = None):
@@ -264,9 +264,7 @@ class NoteGenerationPipeline:
 
 def create_sample_minimal_input() -> List[Dict[str, Any]]:
     """
-    Create sample input in the new minimal format
-    
-    This shows how simple the input has become - no browser bloat!
+    Create sample input in the minimal format
     """
     return [    
         {
@@ -297,7 +295,7 @@ def create_sample_minimal_input() -> List[Dict[str, Any]]:
 def print_pipeline_summary(result: Dict[str, Any]):
     """Print a clean summary of pipeline results"""
     print("\n" + "="*60)
-    print("🧠 AI NOTE PIPELINE RESULTS")
+    print("🧠 BROWSERBUD PIPELINE RESULTS")
     print("="*60)
     
     metadata = result.get("pipeline_metadata", {})
@@ -450,7 +448,7 @@ def main():
     """Main entry point for the pipeline."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="AI Note Generation Pipeline")
+    parser = argparse.ArgumentParser(description="BrowserBud Pipeline")
     parser.add_argument("--config", help="Path to configuration file")
     parser.add_argument("--input", help="Path to input JSON file with capture data")
     parser.add_argument("--output", help="Path to output JSON file for results")
@@ -511,7 +509,7 @@ def main():
 
 
 if __name__ == "__main__":
-    print("🎯 AI NOTE PIPELINE")
+    print("🎯 BROWSERBUD PIPELINE")
     print("="*50)
     print("\n📝 INPUT FORMAT:")
     print("""
