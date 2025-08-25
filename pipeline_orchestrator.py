@@ -17,16 +17,14 @@ from nodes.capture_ingestion import CaptureIngestionNode
 class PipelineOrchestrator:
     """
     Orchestrates the execution of the note processing pipeline.
-    
-    Decoupled Pipeline Orchestrator
-    
+        
     Responsibilities:
     1. Accept minimal standardized input
     2. Execute the complete pipeline 
     3. Return structured results
     
     Does NOT handle:
-    - Input format conversion (handled by adapters)
+    - Input format conversion (handled by adapters - coming soon)
     - Browser-specific logic (removed completely)
     - Request parsing (handled by transport layer)
     """
@@ -301,7 +299,7 @@ class PipelineOrchestrator:
             knowledge_level = self._estimate_knowledge_level(capture['content'])
             
             pipeline_capture = {
-                # Core fields (required by existing nodes)
+                # Core fields
                 'url': capture.get('source_url', 'unknown'),
                 'content': capture['content'],
                 'timestamp': capture['timestamp'],
@@ -310,7 +308,7 @@ class PipelineOrchestrator:
                 'user_id': capture['user_id'],
                 'session_id': session_id,
                 
-                # Minimal metadata (only what's actually useful)
+                # Minimal metadata
                 'title': capture.get('title', 'Untitled'),
                 'domain': domain,
                 'intent': capture.get('intent', 'learn'),
@@ -325,13 +323,13 @@ class PipelineOrchestrator:
                 'content_type': 'text/html',  # Default assumption
                 'language': 'en',  # Default assumption
                 
-                'selected_text': '',  # Let AI decide what's important
+                'selected_text': '',  
                 'highlights': [],
                 'context_before': '',
                 'context_after': '',
-                'dwell_time': 0,  # Not meaningful for learning
-                'scroll_depth': 0,  # Not meaningful for learning
-                'viewport_size': 'unknown',  # Browser fingerprinting
+                'dwell_time': 0, 
+                'scroll_depth': 0, 
+                'viewport_size': 'unknown', 
                 'user_agent': 'minimal_api',
                 'trigger': 'api',
                 'selection_start_offset': 0,
@@ -483,7 +481,7 @@ class PipelineOrchestrator:
                 'export_available': True
             },
             
-            # Pipeline metadata (simplified)
+            # Pipeline metadata
             'metadata': {
                 'pipeline_version': pipeline_metadata.get('pipeline_version', '1.1.0'),
                 'nodes_executed': self._count_executed_nodes(shared_state),
