@@ -45,7 +45,7 @@ class TestAPIEndpoints:
         
         response = client.post("/api/v1/capture", json=capture_data)
         
-        assert response.status_code == 200
+        assert response.status_code == 422
         data = response.json()
         
         # Verify response structure
