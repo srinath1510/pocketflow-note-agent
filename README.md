@@ -2,7 +2,7 @@
 
 **AI-powered pipeline for transforming web research into structured Notion notes with intelligent cross-references and knowledge graphs.**
 
-Transform scattered browser captures into comprehensive, interconnected notes that build your personal knowledge base over time.
+Transform scattered browser captures into comprehensive, interconnected notes that build your personal knowledge base over time. Capture notes from the browser with the BrowserBud Chrome Extension: https://github.com/srinath1510/browserbud-chrome-extension
 
 ## Features
 
